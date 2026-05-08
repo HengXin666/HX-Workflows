@@ -86,18 +86,30 @@ class BiliAPI:
         return data["data"]
 
     def get_play_url(self, aid: int, cid: int, qn: int = 80) -> dict:
-        """获取视频播放 URL（DASH 格式），qn 默认 80 = 1080P"""
+        """获取视频播放 URL（DASH 格式），qn 默认 80 = 1080P。
+        需要 access_key 才能获取 1080P，access_key 参与 WBI 签名。"""
         self._ensure_wbi()
-        params = self._wbi.sign_params({
-            "avid": aid,
-            "cid": cid,
-            "fnval": 16 | 128,
-            "fourk": 1,
-            "qn": qn,
-        }, int(time.time()))
-        resp = self._request_with_retry("GET",
-            "https://api.bilibili.com/x/player/playurl", params=params)
+
+        def _do_request():
+            token = self._token.get_token()
+            params = self._wbi.sign_params({
+                "avid": aid,
+                "cid": cid,
+                "fnval": 16 | 128,
+                "fourk": 1,
+                "qn": qn,
+                "access_key": token["access_token"],
+            }, int(time.time()))
+            return self.client.get(
+                "https://api.bilibili.com/x/player/playurl", params=params)
+
+        resp = _do_request()
         data = resp.json()
+        if data.get("code") == -101:
+            self._token.refresh()
+            resp = _do_request()
+            data = resp.json()
+
         if data.get("code") != 0:
             raise RuntimeError(f"获取播放URL失败: {data.get('message')}")
         return data["data"]
@@ -123,10 +135,10 @@ class BiliAPI:
         params = self._wbi.sign_params({
             "oid": oid,
             "type": 1,
-            "mode": 3,
-            "pagination_str": f'{{"offset":"{{\\"type\\":1,\\"direction\\":1,\\"data\\":{{}}}}\\","page":{page}}}',
+            "mode": 2,
             "sort": sort,
             "ps": ps,
+            "pn": page,
         })
         resp = self._request_with_retry("GET",
             "https://api.bilibili.com/x/v2/reply/wbi/main", params=params)
@@ -184,10 +196,11 @@ class BiliAPI:
             self.get_user_info()
 
     def _request_with_retry(self, method: str, url: str, **kwargs) -> httpx.Response:
-        """带 Token 失效重试的请求"""
+        """带 Token 失效重试的请求。
+        WBI 签名的端点不自动注入 TV appkey 签名，避免权限冲突。"""
         token = self._token.get_token()
         params = kwargs.get("params", {})
-        if isinstance(params, dict) and "access_key" not in params:
+        if isinstance(params, dict) and "access_key" not in params and "w_rid" not in params:
             params["access_key"] = token["access_token"]
             kwargs["params"] = self._signer.sign(params)
 
@@ -199,13 +212,12 @@ class BiliAPI:
             return resp
 
         if isinstance(data, dict) and data.get("code") == -101:
-            # Token 失效，刷新后重试一次
             self._token.refresh()
             token = self._token.get_token()
             params = kwargs.get("params", {})
-            if isinstance(params, dict):
+            if isinstance(params, dict) and "access_key" not in params and "w_rid" not in params:
                 params["access_key"] = token["access_token"]
-            kwargs["params"] = params
+                kwargs["params"] = self._signer.sign(params)
             resp = self.client.request(method, url, **kwargs)
 
         return resp

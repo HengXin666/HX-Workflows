@@ -153,9 +153,15 @@ class BiliTokenManager:
         """从 HX-Git-DB 读取 token"""
         from hx_git_db import make_database
 
-        with make_database(self._repo, self._branch, only=True, token=self._token) as db:
+        db = make_database(self._repo, self._branch, only=True, token=self._token)
+        try:
             with db.open(COOKIE_KEY) as f:
                 self._data = f.read_json() or {}
+        finally:
+            try:
+                db.cleanup()
+            except PermissionError:
+                pass  # Windows .git 文件锁定，不影响数据读取
 
         # 兼容旧代码写入的损坏格式（仅有嵌套 token_info，无顶层 access_token）
         if not self._data.get("access_token") and "token_info" in self._data:
@@ -172,9 +178,16 @@ class BiliTokenManager:
         """写回 HX-Git-DB"""
         from hx_git_db import make_database
 
-        with make_database(self._repo, self._branch, only=True, token=self._token) as db:
+        db = make_database(self._repo, self._branch, only=True, token=self._token)
+        try:
             with db.open(COOKIE_KEY) as f:
                 f.write_json(self._data)
+            db.push()
+        finally:
+            try:
+                db.cleanup()
+            except PermissionError:
+                pass  # Windows .git 文件锁定，不影响数据写入
 
     def _should_refresh(self) -> bool:
         """检查 token 是否需要刷新"""
