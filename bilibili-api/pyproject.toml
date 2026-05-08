@@ -8,3 +8,6 @@ dependencies = [
     "qrcode>=7.4",
     "hx-git-db @ git+https://github.com/HengXin666/HX-Git-DB.git",
 ]
+
+[tool.uv]
+package = false

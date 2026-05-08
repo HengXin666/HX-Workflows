@@ -94,7 +94,7 @@ class BiliAPI:
             "fnval": 16 | 128,
             "fourk": 1,
             "qn": qn,
-        }, time.time())
+        }, int(time.time()))
         resp = self._request_with_retry("GET",
             "https://api.bilibili.com/x/player/playurl", params=params)
         data = resp.json()

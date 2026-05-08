@@ -109,10 +109,31 @@ class BiliTokenManager:
         if data.get("code") != 0:
             raise RuntimeError(f"刷新 Token 失败: {data.get('message')}")
 
-        self._data = data["data"]
+        resp_data = data["data"]
+        # B站 OAuth2 刷新返回嵌套 {token_info: {access_token, ...}} 结构
+        if "token_info" in resp_data:
+            ti = resp_data["token_info"]
+            self._data = {
+                "access_token": ti["access_token"],
+                "refresh_token": ti["refresh_token"],
+                "mid": ti.get("mid", self._data.get("mid")),
+                "uname": self._data.get("uname"),
+                "expires_in": self._normalize_expires(ti.get("expires_in", 0)),
+            }
+        else:
+            self._data = resp_data
         self._data["saved_at"] = int(time.time())
         self._save_to_db()
         return self.get_token()
+
+    @staticmethod
+    def _normalize_expires(expires_in: int) -> int:
+        """标准化 expires_in 为剩余秒数。
+        B站不同接口返回格式不同：有的返回 UTC 时间戳 (> 10^9)，
+        有的返回剩余秒数。统一转为剩余秒数。"""
+        if expires_in > 1_000_000_000:
+            return max(0, expires_in - int(time.time()))
+        return expires_in
 
     def check_status(self) -> dict:
         """检查 token 在 B站 服务端的状态"""
@@ -135,6 +156,17 @@ class BiliTokenManager:
         with make_database(self._repo, self._branch, only=True, token=self._token) as db:
             with db.open(COOKIE_KEY) as f:
                 self._data = f.read_json() or {}
+
+        # 兼容旧代码写入的损坏格式（仅有嵌套 token_info，无顶层 access_token）
+        if not self._data.get("access_token") and "token_info" in self._data:
+            ti = self._data["token_info"]
+            self._data = {
+                "access_token": ti.get("access_token", ""),
+                "refresh_token": ti.get("refresh_token", ""),
+                "mid": ti.get("mid", self._data.get("mid")),
+                "uname": self._data.get("uname"),
+                "expires_in": self._normalize_expires(ti.get("expires_in", 0)),
+            }
 
     def _save_to_db(self):
         """写回 HX-Git-DB"""
