@@ -1,0 +1,26 @@
+name: B站 Token 每日保活
+
+on:
+  schedule:
+    - cron: "0 0 * * *"
+  workflow_dispatch:
+
+jobs:
+  refresh-token:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: 检出 HX-Workflows
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 安装依赖并刷新 Token
+        working-directory: bilibili-api
+        env:
+          GITHUB_TOKEN: ${{ secrets.HX_DATA_PAT }}
+        run: |
+          uv sync
+          uv run python refresh_token.py
