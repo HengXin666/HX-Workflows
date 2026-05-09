@@ -9,5 +9,12 @@ dependencies = [
     "hx-git-db @ git+https://github.com/HengXin666/HX-Git-DB.git",
 ]
 
-[tool.uv]
-package = false
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.metadata]
+allow-direct-references = true
+
+[project.scripts]
+bilibili-token-refresh = "bilibili_api.refresh_token:main"

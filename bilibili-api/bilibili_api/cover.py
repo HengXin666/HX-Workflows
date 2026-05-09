@@ -16,9 +16,9 @@ from typing import Optional
 
 import httpx
 
-from _core import make_client
-from api import BiliAPI
-from bili_token import BiliTokenManager
+from ._core import make_client
+from .api import BiliAPI
+from .bili_token import BiliTokenManager
 
 # 封面清晰度等级和对应 URL 参数
 COVER_QUALITY = {

@@ -15,8 +15,8 @@ B站 视频评论
 
 from typing import Optional
 
-from api import BiliAPI
-from bili_token import BiliTokenManager
+from .api import BiliAPI
+from .bili_token import BiliTokenManager
 
 
 def get_top_comments(

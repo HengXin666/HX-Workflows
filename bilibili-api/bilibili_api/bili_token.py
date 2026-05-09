@@ -25,7 +25,7 @@ from typing import Any, Optional
 
 import httpx
 
-from _core import BiliSigner, make_client
+from ._core import BiliSigner, make_client
 
 DATA_REPO = "https://github.com/HengXin666/__HX-Data__.git"
 DATA_BRANCH = "bilibili-token"

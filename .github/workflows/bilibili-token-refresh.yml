@@ -23,4 +23,4 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.HX_DATA_PAT }}
         run: |
           uv sync
-          uv run python refresh_token.py
+          uv run bilibili-token-refresh

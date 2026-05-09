@@ -13,7 +13,7 @@ import threading
 import time
 from pathlib import Path
 
-from _core import BiliSigner, make_client
+from bilibili_api._core import BiliSigner, make_client
 
 COOKIE_FILE = Path.home() / ".bilibili_downloader" / "cookie.json"
 DATA_REPO = "https://github.com/HengXin666/__HX-Data__.git"

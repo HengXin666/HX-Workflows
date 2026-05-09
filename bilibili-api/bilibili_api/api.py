@@ -22,8 +22,8 @@ from typing import Optional
 
 import httpx
 
-from _core import BiliSigner, WBISigner, make_client
-from bili_token import BiliTokenManager
+from ._core import BiliSigner, WBISigner, make_client
+from .bili_token import BiliTokenManager
 
 
 class BiliAPI:
@@ -178,15 +178,58 @@ class BiliAPI:
             raise RuntimeError(f"获取收藏夹失败: {data.get('message')}")
         return data["data"].get("list", [])
 
-    def get_fav_media_list(self, media_id: int, page: int = 1, ps: int = 40) -> dict:
+    def get_fav_media_list(self, media_id: int, page: int = 1, ps: int = 40, type: int = 0) -> dict:
         """获取收藏夹内容"""
         resp = self._request_with_retry("GET",
             "https://api.bilibili.com/x/v3/fav/resource/list",
-            params={"media_id": media_id, "order": "mtime", "pn": page, "ps": ps, "type": 0, "tid": 0})
+            params={"media_id": media_id, "order": "mtime", "pn": page, "ps": ps, "type": type, "tid": 0})
         data = resp.json()
         if data.get("code") != 0:
             raise RuntimeError(f"获取收藏夹内容失败: {data.get('message')}")
         return data["data"]
+
+    # ========== 收藏夹（扩展） ==========
+
+    def get_fav_collected_list(self, up_mid: int, page: int = 1, ps: int = 20) -> dict:
+        """获取用户收藏的他人收藏夹列表（分页）"""
+        resp = self._request_with_retry("GET",
+            "https://api.bilibili.com/x/v3/fav/folder/collected/list",
+            params={"up_mid": up_mid, "ps": ps, "pn": page, "platform": "web"})
+        data = resp.json()
+        if data.get("code") != 0:
+            raise RuntimeError(f"获取收藏的收藏夹失败: {data.get('message')}")
+        return data["data"]
+
+    # ========== AI 总结 ==========
+
+    def get_video_ai_conclusion(self, bvid: str, cid: int, up_mid: int) -> dict:
+        """获取视频 AI 总结"""
+        self._ensure_wbi()
+        params = self._wbi.sign_params({"bvid": bvid, "cid": cid, "up_mid": up_mid})
+        resp = self._request_with_retry("GET",
+            "https://api.bilibili.com/x/web-interface/wbi/view/conclusion", params=params)
+        try:
+            data = resp.json()
+        except Exception:
+            return {}
+        if data.get("code") != 0:
+            return {}
+        return data.get("data", {}) or {}
+
+    def get_comment_ai_summary(self, oid: int) -> str:
+        """获取评论区 AI 总结"""
+        resp = self._request_with_retry("GET",
+            "https://api.bilibili.com/x/v2/reply/aisummary",
+            params={"oid": oid, "type": 1})
+        if not resp.text or not resp.text.strip():
+            return ""
+        try:
+            data = resp.json()
+        except Exception:
+            return ""
+        if data.get("code") != 0:
+            return ""
+        return (data.get("data") or {}).get("summary", "")
 
     # ========== 内部方法 ==========
 

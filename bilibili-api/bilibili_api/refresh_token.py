@@ -13,7 +13,7 @@ CI: B站 Token 每日保活
 import sys
 from datetime import datetime, timezone
 
-from bili_token import BiliTokenManager
+from bilibili_api.bili_token import BiliTokenManager
 
 
 def main():

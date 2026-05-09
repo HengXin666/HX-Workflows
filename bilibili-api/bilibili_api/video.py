@@ -19,9 +19,9 @@ from typing import Optional
 
 import httpx
 
-from _core import QUALITY_MAP, make_client
-from api import BiliAPI
-from bili_token import BiliTokenManager
+from ._core import QUALITY_MAP, make_client
+from .api import BiliAPI
+from .bili_token import BiliTokenManager
 
 
 def download_video(
