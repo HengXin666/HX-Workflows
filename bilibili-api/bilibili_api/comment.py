@@ -24,7 +24,7 @@ def get_top_comments(
     count: int = 10,
     *,
     token_mgr: Optional[BiliTokenManager] = None,
-    sort: int = 1,
+    sort: int = 2,
 ) -> list[dict]:
     """
     获取视频 Top N 评论
@@ -33,7 +33,7 @@ def get_top_comments(
         bvid: BV 号
         count: 获取条数
         token_mgr: Token 管理器
-        sort: 排序方式 — 0=按时间, 1=按热度（默认）
+        sort: 排序方式 — 0=按时间, 2=按热度（默认）
 
     Returns:
         [
@@ -87,7 +87,7 @@ def get_comment_replies(
     aid = info.get("aid", 0)
 
     # 需要通过主评论接口获取子回复
-    data = api.get_comments(aid, page=1, sort=1, ps=min(count, 20))
+    data = api.get_comments(aid, page=1, sort=2, ps=min(count, 20))
     replies = data.get("replies") or []
 
     for r in replies:

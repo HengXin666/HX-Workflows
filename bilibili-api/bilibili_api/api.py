@@ -121,14 +121,14 @@ class BiliAPI:
 
     # ========== 评论 ==========
 
-    def get_comments(self, oid: int, page: int = 1, sort: int = 1, ps: int = 20) -> dict:
+    def get_comments(self, oid: int, page: int = 1, sort: int = 2, ps: int = 20) -> dict:
         """
         获取视频评论
 
         Args:
             oid: 视频 aid
             page: 页码
-            sort: 0=按时间, 1=按热度
+            sort: 0=按时间, 2=按热度
             ps: 每页条数
         """
         self._ensure_wbi()
@@ -147,7 +147,7 @@ class BiliAPI:
             raise RuntimeError(f"获取评论失败: {data.get('message')}")
         return data["data"]
 
-    def get_top_comments(self, oid: int, count: int = 10, sort: int = 1) -> list:
+    def get_top_comments(self, oid: int, count: int = 10, sort: int = 2) -> list:
         """获取 Top N 热门评论"""
         result = []
         data = self.get_comments(oid, page=1, sort=sort, ps=min(count, 20))
