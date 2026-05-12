@@ -132,10 +132,13 @@ class BiliAPI:
             ps: 每页条数
         """
         self._ensure_wbi()
+        # wbi/main 端点忽略 sort 参数，实际由 mode 控制排序：
+        # mode=2 按时间，mode=3 按热度
+        mode = 3 if sort == 2 else 2
         params = self._wbi.sign_params({
             "oid": oid,
             "type": 1,
-            "mode": 2,
+            "mode": mode,
             "sort": sort,
             "ps": ps,
             "pn": page,

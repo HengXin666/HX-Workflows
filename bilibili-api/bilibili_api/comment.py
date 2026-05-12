@@ -86,8 +86,8 @@ def get_comment_replies(
     info = api.get_video_info(bvid)
     aid = info.get("aid", 0)
 
-    # 需要通过主评论接口获取子回复
-    data = api.get_comments(aid, page=1, sort=2, ps=min(count, 20))
+    # 需要通过主评论接口获取子回复（按时间排序更易找到目标评论）
+    data = api.get_comments(aid, page=1, sort=0, ps=min(count, 20))
     replies = data.get("replies") or []
 
     for r in replies:
