@@ -57,7 +57,9 @@ def get_top_comments(
     info = api.get_video_info(bvid)
     aid = info.get("aid", 0)
 
-    return api.get_top_comments(aid, count=count, sort=sort)
+    comments = api.get_top_comments(aid, count=count, sort=sort)
+    comments.sort(key=lambda c: c.get("like", 0), reverse=True)
+    return comments
 
 
 def get_comment_replies(
