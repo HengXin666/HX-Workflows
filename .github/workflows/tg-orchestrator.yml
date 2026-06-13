@@ -42,6 +42,8 @@ jobs:
 
     env:
       TZ: Asia/Tokyo
+      TG_API_ID: ${{ secrets.TG_API_ID }}
+      TG_API_HASH: ${{ secrets.TG_API_HASH }}
       TG_SESSION_STRINGS: ${{ secrets.TG_SESSION_STRINGS }}
       TG_PROXY: ${{ secrets.TG_PROXY }}
       TG_FORWARD_BOT_TOKEN: ${{ secrets.TG_FORWARD_BOT_TOKEN }}
