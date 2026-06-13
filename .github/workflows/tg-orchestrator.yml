@@ -6,7 +6,7 @@ on:
       mode:
         description: "运行模式"
         required: true
-        default: "run-due"
+        default: "run-all"
         type: choice
         options:
           - list
@@ -20,9 +20,10 @@ on:
         default: "tg-example"
         type: string
   schedule:
-    # GitHub Actions 的 cron 使用 UTC。这里每 15 分钟唤醒一次。
-    # 真实任务时间由 tg/tasks.yml 按 Asia/Tokyo 判断。
-    - cron: "*/15 * * * *"
+    # GitHub Actions 的 cron 使用 UTC。
+    # 北京时间 UTC+8 的 00:15 = UTC 前一天 16:15。
+    # 这里固定为每 24 小时运行一次。
+    - cron: "15 16 * * *"
 
 permissions:
   contents: read
@@ -41,7 +42,7 @@ jobs:
         working-directory: tg
 
     env:
-      TZ: Asia/Tokyo
+      TZ: Asia/Shanghai
       TG_API_ID: ${{ secrets.TG_API_ID }}
       TG_API_HASH: ${{ secrets.TG_API_HASH }}
       TG_SESSION_STRINGS: ${{ secrets.TG_SESSION_STRINGS }}
@@ -72,11 +73,15 @@ jobs:
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'due' }}
         run: uv run python runner.py due
 
-      - name: 运行当前到期任务
-        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'run-due') }}
+      - name: 手动运行当前到期任务
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run-due' }}
         run: uv run python runner.py run-due
 
-      - name: 运行所有已启用任务
+      - name: 定时运行所有已启用任务
+        if: ${{ github.event_name == 'schedule' }}
+        run: uv run python runner.py run-all
+
+      - name: 手动运行所有已启用任务
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run-all' }}
         run: uv run python runner.py run-all
 
