@@ -1,0 +1,33 @@
+# Real orchestration config used by GitHub Actions.
+# Keep secrets in GitHub Actions Secrets, not in this file.
+timezone: Asia/Tokyo
+
+tasks:
+  - id: tg-example
+    enabled: true
+    # GitHub Actions wakes this runner every 15 minutes; this expression decides
+    # whether the task should run in that wake-up.
+    schedule:
+      - daily:08:30
+    command: uv run python scripts/example_task.py
+    timeout_minutes: 10
+
+  # Example: run once per account. Put one Telegram session string per line in
+  # the GitHub Secret named TG_SESSION_STRINGS. The runner injects each line as
+  # TG_SESSION_STRING and also sets TG_ACCOUNT_INDEX.
+  - id: tg-example-multi-account
+    enabled: false
+    schedule:
+      - daily:08:35
+    foreach_secret_lines: TG_SESSION_STRINGS
+    command: uv run python scripts/example_task.py --account "$TG_ACCOUNT_INDEX"
+    timeout_minutes: 10
+
+  # Example dependency chain. This task will run tg-example first if selected.
+  - id: tg-after-example
+    enabled: false
+    needs:
+      - tg-example
+    schedule:
+      - daily:08:40
+    command: echo "Replace this with forwarding / notification logic"
