@@ -1,0 +1,36 @@
+# Copy ideas from here into tasks.yml.
+timezone: Asia/Tokyo
+
+tasks:
+  - id: every-30-minutes-example
+    enabled: true
+    schedule:
+      - every:30
+    command: echo "runs every 30 minutes when GitHub Actions wakes up"
+
+  - id: hourly-example
+    enabled: true
+    schedule:
+      - hourly:05
+    command: echo "runs every hour at minute 05"
+
+  - id: daily-example
+    enabled: true
+    schedule:
+      - daily:08:30
+    command: uv run python scripts/example_task.py
+
+  - id: multi-account-example
+    enabled: false
+    schedule:
+      - daily:08:35
+    foreach_secret_lines: TG_SESSION_STRINGS
+    command: uv run python scripts/example_task.py --account "$TG_ACCOUNT_INDEX"
+
+  - id: notify-after-sign
+    enabled: false
+    needs:
+      - daily-example
+    schedule:
+      - daily:08:40
+    command: echo "send summary to Telegram / Discord / email here"
