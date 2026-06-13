@@ -1,17 +1,21 @@
 # GitHub Actions 使用的任务编排配置。
 #
-# 这里负责“什么时候运行哪个脚本”。
+# 当前工作流已经写死为：每 24 小时运行一次，北京时间 00:15。
+# 定时触发时会直接运行所有 enabled: true 的任务。
+#
+# 这里主要负责“哪些任务启用、运行哪个脚本”。
 # 具体 TG 签到对象、发送内容、点击按钮、转发过滤规则，请写到 tg/signins.yml。
 # 敏感内容仍然放 GitHub Secrets，不要写进仓库。
 
-timezone: Asia/Tokyo
+timezone: Asia/Shanghai
 
 tasks:
   # 冒烟测试：验证 workflow / uv / runner 是否正常。
+  # 配置好真实签到任务后，可以改为 enabled: false。
   - id: tg-example
     enabled: true
     schedule:
-      - daily:08:30
+      - daily:00:15
     command: uv run python scripts/example_task.py
     timeout_minutes: 10
 
@@ -19,7 +23,7 @@ tasks:
   - id: tg-sign-list
     enabled: false
     schedule:
-      - daily:08:25
+      - daily:00:15
     command: uv run python scripts/sign_from_config.py list
     timeout_minutes: 10
 
@@ -31,7 +35,7 @@ tasks:
   - id: tg-sign-demo-send
     enabled: false
     schedule:
-      - daily:08:35
+      - daily:00:15
     command: uv run python scripts/sign_from_config.py run demo-send-sign
     timeout_minutes: 20
 
@@ -39,7 +43,7 @@ tasks:
   - id: tg-sign-demo-click
     enabled: false
     schedule:
-      - daily:08:40
+      - daily:00:15
     command: uv run python scripts/sign_from_config.py run demo-click-button
     timeout_minutes: 20
 
@@ -47,6 +51,6 @@ tasks:
   - id: tg-sign-demo-forward
     enabled: false
     schedule:
-      - daily:08:45
+      - daily:00:15
     command: uv run python scripts/sign_from_config.py run demo-user-forward
     timeout_minutes: 20
