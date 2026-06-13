@@ -1,11 +1,13 @@
 [project]
 name = "hx-tg-workflows"
 version = "0.1.0"
-description = "Composable Telegram automation tasks for GitHub Actions."
+description = "Composable scheduled tasks for GitHub Actions."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "PyYAML>=6.0.2",
+  "Telethon>=1.40.0",
+  "PySocks>=1.7.1",
 ]
 
 [tool.uv]
