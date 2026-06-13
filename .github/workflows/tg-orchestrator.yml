@@ -1,0 +1,83 @@
+name: TG Orchestrator
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "Runner mode"
+        required: true
+        default: "run-due"
+        type: choice
+        options:
+          - list
+          - due
+          - run-due
+          - run-all
+          - run
+      task_id:
+        description: "Task id, only used when mode=run"
+        required: false
+        default: "tg-example"
+        type: string
+  schedule:
+    # GitHub Actions uses UTC cron. This wakes the runner every 15 minutes.
+    # The real per-task schedule is evaluated in tg/tasks.yml using Asia/Tokyo.
+    - cron: "*/15 * * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: tg-orchestrator
+  cancel-in-progress: false
+
+jobs:
+  tg:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    defaults:
+      run:
+        working-directory: tg
+
+    env:
+      TZ: Asia/Tokyo
+      TG_SESSION_STRINGS: ${{ secrets.TG_SESSION_STRINGS }}
+      TG_PROXY: ${{ secrets.TG_PROXY }}
+      TG_FORWARD_BOT_TOKEN: ${{ secrets.TG_FORWARD_BOT_TOKEN }}
+      TG_FORWARD_CHAT_ID: ${{ secrets.TG_FORWARD_CHAT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: tg/pyproject.toml
+
+      - name: Sync dependencies
+        run: uv sync
+
+      - name: List tasks
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'list' }}
+        run: uv run python runner.py list
+
+      - name: Show due tasks
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'due' }}
+        run: uv run python runner.py due
+
+      - name: Run due tasks
+        if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'run-due') }}
+        run: uv run python runner.py run-due
+
+      - name: Run all enabled tasks
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run-all' }}
+        run: uv run python runner.py run-all
+
+      - name: Run selected task
+        if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run' }}
+        run: uv run python runner.py run "${{ inputs.task_id }}"
