@@ -15,11 +15,13 @@ signins.yml        # 明文可编辑的签到配置
 配置分成两层：
 
 ```text
-tg/tasks.yml    # 什么时候运行哪个 job
+tg/tasks.yml    # 启用哪些任务、运行哪个 job
 tg/signins.yml  # 和谁对话、发什么、点什么、转发什么
 ```
 
-GitHub Actions 只负责每 15 分钟唤醒一次 runner。真正的任务时间由 `tg/tasks.yml` 判断；真正的签到对象、动作、过滤规则由 `tg/signins.yml` 控制。
+GitHub Actions 已经写死为：**每 24 小时运行一次，北京时间 00:15**。
+
+定时触发时，workflow 会直接运行 `tg/tasks.yml` 里所有 `enabled: true` 的任务。真正的签到对象、动作、过滤规则由 `tg/signins.yml` 控制。
 
 这样机器人账号、目标 bot、关键词、转发规则失效时，你只需要编辑 YAML，不需要改 Python 脚本。
 
@@ -30,7 +32,7 @@ GitHub Actions 只负责每 15 分钟唤醒一次 runner。真正的任务时间
 tg/pyproject.toml                      # uv 项目配置
 tg/.python-version                     # Python 版本
 tg/runner.py                           # 通用任务编排器
-tg/tasks.yml                           # 当前生效的定时任务配置
+tg/tasks.yml                           # 当前启用的任务配置
 tg/signins.yml                         # TG 签到明文配置
 tg/tasks.example.yml                   # 更多任务配置示例
 tg/CONFIGURE.md                        # 签到和转发配置教程
@@ -40,23 +42,34 @@ tg/scripts/sign_from_config.py         # 从 signins.yml 执行签到
 tg/scripts/gen_session.py              # 本地生成 session string
 ```
 
-## 支持的定时表达式
+## 固定运行时间
 
-```yaml
-schedule:
-  - every:30       # 每 30 分钟运行一次
-  - hourly:05      # 每小时第 05 分钟运行一次
-  - daily:08:30    # 每天 08:30 运行一次
-  - cron:08:30     # daily:08:30 的别名
-```
-
-默认时区是：
+当前 workflow 固定为：
 
 ```text
-Asia/Tokyo
+北京时间 00:15
+每 24 小时运行一次
 ```
 
-注意：GitHub Actions 的 `schedule` 使用 UTC cron，本项目的 workflow 每 15 分钟唤醒一次；具体哪个任务要不要执行，由 `tg/runner.py` 根据 `tg/tasks.yml` 和 `Asia/Tokyo` 时间判断。
+GitHub Actions 的 cron 使用 UTC，所以 workflow 里写的是：
+
+```yaml
+- cron: "15 16 * * *"
+```
+
+含义是：
+
+```text
+UTC 16:15 = 北京时间次日 00:15
+```
+
+为了避免 GitHub Actions 延迟几分钟导致内部定时判断错过，定时触发时不会再执行 `run-due`，而是直接执行：
+
+```bash
+uv run python runner.py run-all
+```
+
+也就是：运行所有 `enabled: true` 的任务。
 
 ## 手动运行
 
@@ -71,9 +84,9 @@ Actions -> TG Orchestrator -> Run workflow
 ```text
 list     查看任务列表
 due      查看当前到期的任务
-run-due  运行当前到期的任务
-run-all  运行所有已启用任务
-run      运行指定任务
+run-due  手动运行当前到期的任务
+run-all  手动运行所有已启用任务
+run      手动运行指定任务
 ```
 
 当 `mode=run` 时，需要填写 `task_id`，例如：
@@ -125,15 +138,17 @@ TG_FORWARD_CHAT_ID
       regex: []
 ```
 
-4. 编辑 `tg/tasks.yml`，让 workflow 定时执行这个 job：
+4. 编辑 `tg/tasks.yml`，启用对应任务：
 
 ```yaml
 - id: tg-sign-my-sign
   enabled: true
   schedule:
-    - daily:08:30
+    - daily:00:15
   command: uv run python scripts/sign_from_config.py run my-sign
 ```
+
+注意：定时触发时会运行所有 `enabled: true` 的任务，所以 `schedule` 更多是给手动 `due/run-due` 查看使用。
 
 ## 多账号模式
 
