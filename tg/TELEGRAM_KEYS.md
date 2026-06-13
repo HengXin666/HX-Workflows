@@ -65,7 +65,49 @@ TG_API_HASH=<你的 api_hash>
 
 ---
 
-## 3. 获取 `TG_SESSION_STRINGS`
+## 3. 无法创建 `api_id/api_hash` 怎么办
+
+当前项目的“用户账号自动签到”基于 Telethon / MTProto。这个路线无法完全绕过 `api_id/api_hash`。
+
+如果 `my.telegram.org` 无法创建 application，可以先按下面顺序排查：
+
+1. 确认这个手机号已经能在官方 Telegram 客户端正常登录和收发消息。
+2. 换浏览器或无痕模式，清理 `my.telegram.org` 的 cookie 后重试。
+3. 不要使用数据中心代理或频繁切换 IP 的代理；换成更稳定的住宅网络/手机网络重试。
+4. application 表单尽量只填简单英文和数字，例如：
+
+```text
+App title: hxworkflow
+Short name: hxworkflow
+Platform: Desktop
+URL: 留空
+Description: personal automation
+```
+
+5. 如果账号是刚注册的，等待一段时间后再试。
+6. 如果页面已经存在一个 application，直接使用已有的 `api_id/api_hash`；Telegram 官方限制每个号码只能关联一个 `api_id`。
+7. 如果多个临时账号都要跑，不需要每个账号都创建 API。`api_id/api_hash` 是应用参数，可以配合同一个脚本登录多个手机号；多账号只需要多个 session string。
+
+### 可以不用 `api_id/api_hash` 吗？
+
+分情况：
+
+| 场景 | 是否可以不用 |
+|---|---:|
+| 用户账号给 bot/群发消息签到 | 不可以 |
+| 用户账号点击 bot 按钮签到 | 不可以 |
+| 用户账号读取返回消息并转发 | 不可以 |
+| 只用通知 bot 给自己发摘要 | 可以，但这不能替代用户账号签到 |
+
+原因：Bot API 只能控制你创建的 bot，不能替代你的用户账号去和其他 bot 对话签到；而 Telethon 登录用户账号需要 `api_id/api_hash`。
+
+### 不推荐的做法
+
+不要把网上别人公开的 `api_id/api_hash` 填进来。公开 API 参数可能被限制、风控或导致账号异常。
+
+---
+
+## 4. 获取 `TG_SESSION_STRINGS`
 
 `TG_SESSION_STRINGS` 是真正代表“用户账号登录态”的参数。
 
@@ -123,7 +165,7 @@ session_string_for_account_3
 
 ---
 
-## 4. 获取 `TG_FORWARD_BOT_TOKEN`
+## 5. 获取 `TG_FORWARD_BOT_TOKEN`
 
 如果你使用 `forward.mode: notify`，脚本会用 Telegram Bot API 给你发送一条摘要通知。
 
@@ -146,7 +188,7 @@ TG_FORWARD_BOT_TOKEN=<BotFather 给你的 token>
 
 ---
 
-## 5. 获取 `TG_FORWARD_CHAT_ID`
+## 6. 获取 `TG_FORWARD_CHAT_ID`
 
 `TG_FORWARD_CHAT_ID` 表示通知要发到哪里。
 
@@ -204,7 +246,7 @@ https://api.telegram.org/bot<你的 bot token>/getUpdates
 
 ---
 
-## 6. 获取 `peer`：和谁对话进行签到
+## 7. 获取 `peer`：和谁对话进行签到
 
 `peer` 写在 `tg/signins.yml` 中，例如：
 
@@ -225,7 +267,7 @@ peer: "@example_bot"
 
 ---
 
-## 7. 配置代理 `TG_PROXY`
+## 8. 配置代理 `TG_PROXY`
 
 如果 GitHub Actions 访问 Telegram 不稳定，可以配置代理 Secret：
 
@@ -249,7 +291,7 @@ http://
 
 ---
 
-## 8. 最小可用配置清单
+## 9. 最小可用配置清单
 
 至少需要：
 
