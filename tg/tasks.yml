@@ -1,33 +1,52 @@
-# Real orchestration config used by GitHub Actions.
-# Keep secrets in GitHub Actions Secrets, not in this file.
+# GitHub Actions 使用的任务编排配置。
+#
+# 这里负责“什么时候运行哪个脚本”。
+# 具体 TG 签到对象、发送内容、点击按钮、转发过滤规则，请写到 tg/signins.yml。
+# 敏感内容仍然放 GitHub Secrets，不要写进仓库。
+
 timezone: Asia/Tokyo
 
 tasks:
+  # 冒烟测试：验证 workflow / uv / runner 是否正常。
   - id: tg-example
     enabled: true
-    # GitHub Actions wakes this runner every 15 minutes; this expression decides
-    # whether the task should run in that wake-up.
     schedule:
       - daily:08:30
     command: uv run python scripts/example_task.py
     timeout_minutes: 10
 
-  # Example: run once per account. Put one Telegram session string per line in
-  # the GitHub Secret named TG_SESSION_STRINGS. The runner injects each line as
-  # TG_SESSION_STRING and also sets TG_ACCOUNT_INDEX.
-  - id: tg-example-multi-account
+  # 查看 signins.yml 里有哪些签到配置。
+  - id: tg-sign-list
+    enabled: false
+    schedule:
+      - daily:08:25
+    command: uv run python scripts/sign_from_config.py list
+    timeout_minutes: 10
+
+  # 示例：执行 tg/signins.yml 里的 demo-send-sign。
+  # 使用前需要：
+  # 1. 在 tg/signins.yml 中把 jobs.demo-send-sign.enabled 改成 true
+  # 2. 把这里的 enabled 改成 true
+  # 3. 配置 GitHub Secrets: TG_API_ID / TG_API_HASH / TG_SESSION_STRINGS
+  - id: tg-sign-demo-send
     enabled: false
     schedule:
       - daily:08:35
-    foreach_secret_lines: TG_SESSION_STRINGS
-    command: uv run python scripts/example_task.py --account "$TG_ACCOUNT_INDEX"
-    timeout_minutes: 10
+    command: uv run python scripts/sign_from_config.py run demo-send-sign
+    timeout_minutes: 20
 
-  # Example dependency chain. This task will run tg-example first if selected.
-  - id: tg-after-example
+  # 示例：执行“发送 /start 后点击按钮”的签到流程。
+  - id: tg-sign-demo-click
     enabled: false
-    needs:
-      - tg-example
     schedule:
       - daily:08:40
-    command: echo "Replace this with forwarding / notification logic"
+    command: uv run python scripts/sign_from_config.py run demo-click-button
+    timeout_minutes: 20
+
+  # 示例：执行真正转发匹配原消息的流程。
+  - id: tg-sign-demo-forward
+    enabled: false
+    schedule:
+      - daily:08:45
+    command: uv run python scripts/sign_from_config.py run demo-user-forward
+    timeout_minutes: 20
