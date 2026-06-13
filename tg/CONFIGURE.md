@@ -1,29 +1,114 @@
-# TG 自动任务配置指南
+# TG 签到配置指南
 
-本文档说明如何配置：
+本项目现在把配置分成两层：
 
-1. 多个 Telegram 账号
-2. 每个任务和谁对话进行签到
-3. 如何在 `tg/tasks.yml` 中编排多个签到任务
-4. 哪些内容应该放 GitHub Secrets，哪些内容可以写进 YAML
+```text
+tg/tasks.yml    # 负责“什么时候运行哪个 signins job”
+tg/signins.yml  # 负责“和谁对话、发什么、点什么、转发什么”
+```
 
-> 不要把 Telegram session、验证码、手机号、Bot Token 提交到仓库。所有敏感内容都放 GitHub Actions Secrets。
+敏感参数放 GitHub Secrets，获取方式请看：[`TELEGRAM_KEYS.md`](./TELEGRAM_KEYS.md)。
 
 ---
 
-## 0. 先理解三个概念
+## 1. 哪些内容写进明文配置
 
-### 操作账号
+可以写进 `tg/signins.yml` 的内容：
 
-操作账号指的是：**哪个 Telegram 用户账号去执行签到**。
+```text
+peer                 # 和谁对话，例如 @example_bot
+actions              # 发送消息、等待、点击按钮
+collect              # 读取最近几条返回消息
+forward.mode         # notify 或 user_forward
+forward.when         # 什么时候转发/通知
+forward.include      # 命中哪些内容才转发
+forward.exclude      # 排除哪些内容
+```
 
-在本项目里，操作账号通过 GitHub Secret `TG_SESSION_STRINGS` 提供。
+不要写进 `tg/signins.yml` 的内容：
+
+```text
+TG_API_ID
+TG_API_HASH
+TG_SESSION_STRINGS
+TG_FORWARD_BOT_TOKEN
+验证码
+手机号
+```
+
+---
+
+## 2. 最小签到配置
+
+例如：每天让所有账号给 `@example_bot` 发送 `签到`。
+
+### 第一步：配置 `tg/signins.yml`
+
+```yaml
+jobs:
+  - id: my-sign
+    enabled: true
+    peer: "@example_bot"
+    accounts_secret: TG_SESSION_STRINGS
+    actions:
+      - type: send
+        text: "签到"
+      - type: wait
+        seconds: 5
+    collect:
+      last_messages: 3
+    forward:
+      enabled: true
+      mode: notify
+      when:
+        - failure
+        - matched
+      include:
+        contains:
+          - "签到成功"
+          - "已签到"
+          - "积分"
+        regex: []
+      exclude:
+        contains:
+          - "广告"
+        regex: []
+```
+
+含义：
+
+```text
+每个账号 -> 找到 @example_bot -> 发送 “签到” -> 等 5 秒 -> 读取最近 3 条消息 -> 根据过滤规则决定是否通知/转发
+```
+
+### 第二步：配置 `tg/tasks.yml`
+
+```yaml
+- id: tg-sign-my-sign
+  enabled: true
+  schedule:
+    - daily:08:30
+  command: uv run python scripts/sign_from_config.py run my-sign
+  timeout_minutes: 20
+```
+
+含义：
+
+```text
+每天 Asia/Tokyo 08:30 执行 signins.yml 里的 my-sign
+```
+
+---
+
+## 3. 多账号怎么配置
+
+多账号不写在 YAML 里，而是写在 GitHub Secret：
 
 ```text
 TG_SESSION_STRINGS
 ```
 
-它是一个多行 Secret：
+一行一个账号：
 
 ```text
 session_string_for_account_1
@@ -31,349 +116,306 @@ session_string_for_account_2
 session_string_for_account_3
 ```
 
-runner 会逐行读取，每一行当成一个账号，并自动注入：
+`signins.yml` 中使用：
+
+```yaml
+accounts_secret: TG_SESSION_STRINGS
+```
+
+脚本会自动逐行执行：
 
 ```text
-TG_SESSION_STRING=<当前账号的 session string>
-TG_ACCOUNT_INDEX=1/2/3...
+账号 1 -> TG_SESSION_STRINGS 第 1 行
+账号 2 -> TG_SESSION_STRINGS 第 2 行
+账号 3 -> TG_SESSION_STRINGS 第 3 行
 ```
+
+某个临时账号失效时，只需要在 GitHub Secret `TG_SESSION_STRINGS` 中删除或替换对应那一行。
 
 ---
 
-### 签到对象
+## 4. “和谁对话进行签到”怎么写
 
-签到对象指的是：**这个账号要去和谁对话**。
+核心字段是：
 
-常见形式：
+```yaml
+peer: "@example_bot"
+```
 
-| 类型 | 示例 | 说明 |
+常见写法：
+
+| 目标 | 写法 | 说明 |
 |---|---|---|
-| Bot 用户名 | `@example_bot` | 最常见，给某个 bot 发 `/checkin`、`签到` 等 |
-| 群组用户名 | `@example_group` | 账号必须已经加入该群 |
-| 频道用户名 | `@example_channel` | 只适合需要读取/转发频道消息的场景 |
-| 数字 chat id | `-1001234567890` | 私有群/频道常用，需要你自己获取 |
-
-在配置里建议命名为：
-
-```yaml
-TARGET_PEER: "@example_bot"
-```
+| 公开 bot | `@example_bot` | 最推荐 |
+| 公开群 | `@example_group` | 账号必须已加入 |
+| 公开频道 | `@example_channel` | 账号必须可访问 |
+| 私有群/频道 | `-1001234567890` | 使用数字 chat id |
 
 ---
 
-### 签到动作
+## 5. 签到动作怎么编排
 
-签到动作指的是：**对签到对象做什么**。
-
-常见动作：
-
-| 动作 | 示例 |
-|---|---|
-| 发消息 | `签到`、`/checkin`、`/start` |
-| 点击按钮 | 点击文本为 `签到` 的 inline button / keyboard button |
-| 转发消息 | 把目标聊天里的新消息转发到另一个聊天 |
-| 签到后通知 | 把运行结果发给你的通知 bot 或群 |
-
-在配置里建议命名为：
+### 发送消息
 
 ```yaml
-SIGN_MESSAGE: "签到"
-CLICK_BUTTON_TEXT: "签到"
-FORWARD_TO: "@your_log_channel"
+actions:
+  - type: send
+    text: "签到"
 ```
+
+### 发送 `/checkin`
+
+```yaml
+actions:
+  - type: send
+    text: "/checkin"
+```
+
+### 先 `/start` 再签到
+
+```yaml
+actions:
+  - type: send
+    text: "/start"
+  - type: wait
+    seconds: 3
+  - type: send
+    text: "签到"
+```
+
+### 先 `/start` 再点击按钮
+
+```yaml
+actions:
+  - type: send
+    text: "/start"
+  - type: wait
+    seconds: 3
+  - type: click
+    text: "签到"
+    search_limit: 5
+```
+
+`search_limit` 表示向前查找最近几条消息里的按钮。
 
 ---
 
-## 1. GitHub Secrets 怎么配置
+## 6. 转发/通知不是全量，而是可配置过滤
 
-进入你的仓库：
+转发配置在 `forward` 下。
 
-```text
-Settings -> Secrets and variables -> Actions -> New repository secret
-```
-
-建议先创建这些 Secrets：
-
-| Secret 名称 | 是否必需 | 用途 |
-|---|---:|---|
-| `TG_SESSION_STRINGS` | 是 | 多账号 session，一行一个账号 |
-| `TG_PROXY` | 否 | 代理，例如 `socks5://user:pass@host:port` |
-| `TG_FORWARD_BOT_TOKEN` | 否 | 用 Bot API 发送通知时使用 |
-| `TG_FORWARD_CHAT_ID` | 否 | 通知发送到哪个聊天 |
-
-### 多账号 Secret 示例
-
-`TG_SESSION_STRINGS` 的值应该是这样：
-
-```text
-1Axxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-1Bxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-1Cxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx
-```
-
-注意：
-
-- 一行一个账号
-- 不要加逗号
-- 不要加引号
-- 不要把它写进 `tasks.yml`
-- 不要发给 ChatGPT、别人或公开日志
-
----
-
-## 2. `tasks.yml` 中如何启用多账号
-
-单账号任务可以直接运行：
+### 只在失败或命中关键词时通知
 
 ```yaml
-- id: sign-example-single
+forward:
   enabled: true
-  schedule:
-    - daily:08:30
-  command: uv run python scripts/example_task.py
-```
-
-多账号任务需要加：
-
-```yaml
-foreach_secret_lines: TG_SESSION_STRINGS
-```
-
-完整示例：
-
-```yaml
-- id: sign-example-multi
-  enabled: true
-  schedule:
-    - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "签到"
-  command: uv run python scripts/example_task.py --account "$TG_ACCOUNT_INDEX"
-```
-
-运行时会变成：
-
-```text
-账号 1 -> TG_SESSION_STRING=第 1 行 session -> 对 @example_bot 发 签到
-账号 2 -> TG_SESSION_STRING=第 2 行 session -> 对 @example_bot 发 签到
-账号 3 -> TG_SESSION_STRING=第 3 行 session -> 对 @example_bot 发 签到
-```
-
----
-
-## 3. 如何配置“和谁对话进行签到”
-
-核心字段是 `TARGET_PEER`。
-
-### 场景 A：和某个 bot 对话签到
-
-例如你要让所有账号每天 08:30 给 `@example_bot` 发 `签到`：
-
-```yaml
-- id: sign-example-bot
-  enabled: true
-  schedule:
-    - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "签到"
-  command: uv run python scripts/sign_message.py
+  mode: notify
+  when:
+    - failure
+    - matched
+  include:
+    contains:
+      - "签到成功"
+      - "已签到"
+      - "积分"
+    regex: []
+  exclude:
+    contains:
+      - "广告"
+    regex: []
 ```
 
 含义：
 
 ```text
-每个账号 -> 打开 @example_bot -> 发送 签到
+失败 -> 通知
+返回消息包含 签到成功 / 已签到 / 积分 -> 通知
+返回消息包含 广告 -> 不通知
+其他普通消息 -> 不通知
 ```
+
+### 使用正则匹配
+
+```yaml
+forward:
+  include:
+    contains: []
+    regex:
+      - "签到.*成功"
+      - "积分[：: ]+\\d+"
+  exclude:
+    contains: []
+    regex:
+      - "广告|推广"
+```
+
+注意 YAML 字符串里的反斜杠需要转义，例如 `\\d+`。
 
 ---
 
-### 场景 B：发送 `/checkin`
+## 7. 两种转发模式
+
+### `notify`：发送摘要通知
 
 ```yaml
-- id: sign-checkin-command
+forward:
   enabled: true
-  schedule:
-    - daily:08:35
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "/checkin"
-  command: uv run python scripts/sign_message.py
+  mode: notify
+  when:
+    - failure
+    - matched
 ```
 
----
-
-### 场景 C：先发 `/start`，再发 `签到`
-
-可以拆成两个任务，并用 `needs` 编排顺序：
-
-```yaml
-- id: sign-start
-  enabled: true
-  schedule:
-    - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "/start"
-  command: uv run python scripts/sign_message.py
-
-- id: sign-after-start
-  enabled: true
-  needs:
-    - sign-start
-  schedule:
-    - daily:08:31
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "签到"
-  command: uv run python scripts/sign_message.py
-```
-
----
-
-### 场景 D：点击按钮签到
-
-如果目标 bot 不是靠文字命令，而是需要点击按钮，可以这样描述：
-
-```yaml
-- id: sign-click-button
-  enabled: true
-  schedule:
-    - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    BOOT_MESSAGE: "/start"
-    CLICK_BUTTON_TEXT: "签到"
-  command: uv run python scripts/sign_click_button.py
-```
-
-含义：
+需要 GitHub Secrets：
 
 ```text
-每个账号 -> 打开 @example_bot -> 发送 /start -> 查找按钮 签到 -> 点击
+TG_FORWARD_BOT_TOKEN
+TG_FORWARD_CHAT_ID
 ```
 
----
+这个模式不会真正 forward 原消息，而是用你的通知 bot 发一条摘要。
 
-### 场景 E：把签到结果转发到另一个聊天
+适合：
 
-如果脚本支持转发，可以加：
+```text
+- 只想知道签到是否成功
+- 想记录失败账号
+- 不想把原消息全部搬运出去
+```
+
+### `user_forward`：真正转发匹配的原消息
 
 ```yaml
-- id: sign-and-forward
+forward:
   enabled: true
-  schedule:
-    - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS
-  env:
-    TARGET_PEER: "@example_bot"
-    SIGN_MESSAGE: "签到"
-    FORWARD_TO: "@your_log_channel"
-  command: uv run python scripts/sign_message.py --forward
+  mode: user_forward
+  to_peer: "@your_log_channel"
+  when:
+    - matched
+    - failure
 ```
 
-含义：
+这个模式会使用当前登录的用户账号，把命中过滤规则的原消息转发到 `to_peer`。
+
+适合：
 
 ```text
-每个账号 -> 签到 -> 读取返回消息 -> 转发到 @your_log_channel
+- 需要保留原始消息来源
+- 需要把签到结果转发到自己的日志频道
 ```
+
+注意：当前用户账号必须有权限访问 `to_peer`，并且能向它发消息/转发消息。
 
 ---
 
-## 4. 多个不同签到对象怎么写
+## 8. 多个机器人怎么配置
 
-如果你有多个 bot，例如：
+例如你有三个签到对象：
 
 ```text
-@example_bot_a 每天 08:30 发送 签到
-@example_bot_b 每天 08:40 发送 /checkin
-@example_bot_c 每天 09:00 点击按钮 签到
+@bot_a  每天 08:30 发送 签到
+@bot_b  每天 08:40 发送 /checkin
+@bot_c  每天 08:50 点击 签到 按钮
 ```
 
-可以这样写：
+`tg/signins.yml`：
 
 ```yaml
-tasks:
+jobs:
   - id: sign-bot-a
     enabled: true
-    schedule:
-      - daily:08:30
-    foreach_secret_lines: TG_SESSION_STRINGS
-    env:
-      TARGET_PEER: "@example_bot_a"
-      SIGN_MESSAGE: "签到"
-    command: uv run python scripts/sign_message.py
+    peer: "@bot_a"
+    accounts_secret: TG_SESSION_STRINGS
+    actions:
+      - type: send
+        text: "签到"
+      - type: wait
+        seconds: 5
+    collect:
+      last_messages: 3
+    forward:
+      enabled: true
+      when: [failure, matched]
+      include:
+        contains: ["签到成功", "积分"]
+        regex: []
+      exclude:
+        contains: []
+        regex: []
 
   - id: sign-bot-b
     enabled: true
-    schedule:
-      - daily:08:40
-    foreach_secret_lines: TG_SESSION_STRINGS
-    env:
-      TARGET_PEER: "@example_bot_b"
-      SIGN_MESSAGE: "/checkin"
-    command: uv run python scripts/sign_message.py
+    peer: "@bot_b"
+    accounts_secret: TG_SESSION_STRINGS
+    actions:
+      - type: send
+        text: "/checkin"
+      - type: wait
+        seconds: 5
+    collect:
+      last_messages: 3
+    forward:
+      enabled: true
+      when: [failure, matched]
+      include:
+        contains: ["success", "checked"]
+        regex: []
+      exclude:
+        contains: []
+        regex: []
 
   - id: sign-bot-c
     enabled: true
-    schedule:
-      - daily:09:00
-    foreach_secret_lines: TG_SESSION_STRINGS
-    env:
-      TARGET_PEER: "@example_bot_c"
-      BOOT_MESSAGE: "/start"
-      CLICK_BUTTON_TEXT: "签到"
-    command: uv run python scripts/sign_click_button.py
+    peer: "@bot_c"
+    accounts_secret: TG_SESSION_STRINGS
+    actions:
+      - type: send
+        text: "/start"
+      - type: wait
+        seconds: 3
+      - type: click
+        text: "签到"
+        search_limit: 5
+      - type: wait
+        seconds: 5
+    collect:
+      last_messages: 5
+    forward:
+      enabled: true
+      when: [failure, matched]
+      include:
+        contains: ["领取成功", "已签到"]
+        regex: []
+      exclude:
+        contains: []
+        regex: []
 ```
 
----
-
-## 5. 每个账号签到不同对象怎么写
-
-如果账号 A、B、C 要签到同一个对象，用 `TG_SESSION_STRINGS` 就够了。
-
-如果每个账号要签到不同对象，建议新建多个 Secret：
-
-```text
-TG_SESSION_STRINGS_BOT_A
-TG_SESSION_STRINGS_BOT_B
-TG_SESSION_STRINGS_BOT_C
-```
-
-然后配置：
+`tg/tasks.yml`：
 
 ```yaml
-- id: sign-bot-a
+- id: tg-sign-bot-a
   enabled: true
   schedule:
     - daily:08:30
-  foreach_secret_lines: TG_SESSION_STRINGS_BOT_A
-  env:
-    TARGET_PEER: "@example_bot_a"
-    SIGN_MESSAGE: "签到"
-  command: uv run python scripts/sign_message.py
+  command: uv run python scripts/sign_from_config.py run sign-bot-a
 
-- id: sign-bot-b
+- id: tg-sign-bot-b
   enabled: true
   schedule:
     - daily:08:40
-  foreach_secret_lines: TG_SESSION_STRINGS_BOT_B
-  env:
-    TARGET_PEER: "@example_bot_b"
-    SIGN_MESSAGE: "/checkin"
-  command: uv run python scripts/sign_message.py
+  command: uv run python scripts/sign_from_config.py run sign-bot-b
+
+- id: tg-sign-bot-c
+  enabled: true
+  schedule:
+    - daily:08:50
+  command: uv run python scripts/sign_from_config.py run sign-bot-c
 ```
 
 ---
 
-## 6. 手动测试
+## 9. 手动测试
 
 进入 GitHub：
 
@@ -381,96 +423,32 @@ TG_SESSION_STRINGS_BOT_C
 Actions -> TG Orchestrator -> Run workflow
 ```
 
-### 查看任务列表
+查看任务：
 
 ```text
 mode = list
 ```
 
-### 查看当前应该运行哪些任务
-
-```text
-mode = due
-```
-
-### 运行当前到期任务
-
-```text
-mode = run-due
-```
-
-### 运行指定任务
+运行指定任务：
 
 ```text
 mode = run
-task_id = tg-example
+task_id = tg-sign-demo-send
 ```
 
-如果你新建了任务，例如 `sign-example-bot`，就填：
+也可以先在本地测试：
 
-```text
-task_id = sign-example-bot
-```
-
----
-
-## 7. 目前仓库状态
-
-当前仓库已经有编排器和示例任务：
-
-```text
-tg/runner.py
-tg/tasks.yml
-tg/scripts/example_task.py
-```
-
-但是 `example_task.py` 只是 smoke test，不会真的连接 Telegram。
-
-真正执行 Telegram 签到时，需要再添加实际脚本，例如：
-
-```text
-tg/scripts/sign_message.py
-tg/scripts/sign_click_button.py
-```
-
-这些脚本应该读取环境变量：
-
-```text
-TG_SESSION_STRING
-TG_PROXY
-TARGET_PEER
-SIGN_MESSAGE
-CLICK_BUTTON_TEXT
-FORWARD_TO
+```bash
+cd tg
+uv sync
+uv run python scripts/sign_from_config.py list
+uv run python scripts/sign_from_config.py run demo-send-sign
 ```
 
 ---
 
-## 8. 推荐最终结构
+## 10. 安全提醒
 
-```text
-tg/
-  pyproject.toml
-  runner.py
-  tasks.yml
-  CONFIGURE.md
-  scripts/
-    example_task.py
-    sign_message.py
-    sign_click_button.py
-```
+请只自动化你自己的账号，以及你有权限使用的 bot、群组或频道。
 
----
-
-## 9. 安全提醒
-
-请只自动化你自己的账号和你有权限使用的 bot、群组或频道。
-
-不要用这个项目做：
-
-- 批量骚扰
-- 绕过平台风控
-- 未授权抓取/转发私密内容
-- 违反目标 bot、群组、频道规则的行为
-
-如果某个 bot 明确禁止自动化，请不要对它使用自动签到。
+不要使用本项目进行骚扰、绕过风控、未授权抓取/转发私密内容，或违反目标 bot/群组/频道规则的行为。
