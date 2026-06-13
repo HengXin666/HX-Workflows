@@ -4,7 +4,7 @@ on:
   workflow_dispatch:
     inputs:
       mode:
-        description: "Runner mode"
+        description: "运行模式"
         required: true
         default: "run-due"
         type: choice
@@ -15,13 +15,13 @@ on:
           - run-all
           - run
       task_id:
-        description: "Task id, only used when mode=run"
+        description: "任务 ID，仅 mode=run 时使用"
         required: false
         default: "tg-example"
         type: string
   schedule:
-    # GitHub Actions uses UTC cron. This wakes the runner every 15 minutes.
-    # The real per-task schedule is evaluated in tg/tasks.yml using Asia/Tokyo.
+    # GitHub Actions 的 cron 使用 UTC。这里每 15 分钟唤醒一次。
+    # 真实任务时间由 tg/tasks.yml 按 Asia/Tokyo 判断。
     - cron: "*/15 * * * *"
 
 permissions:
@@ -50,36 +50,36 @@ jobs:
       TG_FORWARD_CHAT_ID: ${{ secrets.TG_FORWARD_CHAT_ID }}
 
     steps:
-      - name: Checkout
+      - name: 拉取仓库
         uses: actions/checkout@v4
 
-      - name: Install uv
+      - name: 安装 uv
         uses: astral-sh/setup-uv@v5
 
-      - name: Set up Python
+      - name: 设置 Python
         uses: actions/setup-python@v5
         with:
           python-version-file: tg/.python-version
 
-      - name: Sync dependencies
+      - name: 安装依赖
         run: uv sync
 
-      - name: List tasks
+      - name: 查看任务列表
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'list' }}
         run: uv run python runner.py list
 
-      - name: Show due tasks
+      - name: 查看当前到期任务
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'due' }}
         run: uv run python runner.py due
 
-      - name: Run due tasks
+      - name: 运行当前到期任务
         if: ${{ github.event_name == 'schedule' || (github.event_name == 'workflow_dispatch' && inputs.mode == 'run-due') }}
         run: uv run python runner.py run-due
 
-      - name: Run all enabled tasks
+      - name: 运行所有已启用任务
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run-all' }}
         run: uv run python runner.py run-all
 
-      - name: Run selected task
+      - name: 运行指定任务
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'run' }}
         run: uv run python runner.py run "${{ inputs.task_id }}"
