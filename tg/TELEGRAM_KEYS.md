@@ -38,7 +38,42 @@ schedule             # 写在 tg/tasks.yml 里
 
 ---
 
-## 2. 获取 `TG_API_ID` 和 `TG_API_HASH`
+## 2. 先区分：BotFather token 和 API ID 不是一回事
+
+`@BotFather` 创建 bot 后给你的 HTTP API token，只能用于 Telegram Bot API。
+
+它适合做：
+
+```text
+- 给你发送运行结果通知
+- 把签到摘要发到某个 chat id
+- 管理你自己创建的 bot
+```
+
+它不能替代用户账号做这些事：
+
+```text
+- 用你的用户账号去找其他 bot 签到
+- 用你的用户账号点击其他 bot 的按钮
+- 读取你的用户账号和目标 bot 的聊天返回
+- 把用户账号收到的原始消息转发出去
+```
+
+所以在本项目里：
+
+```text
+TG_FORWARD_BOT_TOKEN = BotFather 给你的 bot token，只用于通知/摘要
+TG_API_ID / TG_API_HASH = 用户账号登录 Telegram API 所需参数
+TG_SESSION_STRINGS = 用户账号登录态，一行一个账号
+```
+
+如果只是想“运行结束后发一条通知”，BotFather token 可行。
+
+如果想“自动签到”，仍然需要 `TG_API_ID`、`TG_API_HASH` 和 `TG_SESSION_STRINGS`。
+
+---
+
+## 3. 获取 `TG_API_ID` 和 `TG_API_HASH`
 
 `TG_API_ID` 和 `TG_API_HASH` 是用户账号登录 Telegram API 所需的客户端参数。
 
@@ -65,7 +100,7 @@ TG_API_HASH=<你的 api_hash>
 
 ---
 
-## 3. 无法创建 `api_id/api_hash` 怎么办
+## 4. 无法创建 `api_id/api_hash` 怎么办
 
 当前项目的“用户账号自动签到”基于 Telethon / MTProto。这个路线无法完全绕过 `api_id/api_hash`。
 
@@ -107,7 +142,7 @@ Description: personal automation
 
 ---
 
-## 4. 获取 `TG_SESSION_STRINGS`
+## 5. 获取 `TG_SESSION_STRINGS`
 
 `TG_SESSION_STRINGS` 是真正代表“用户账号登录态”的参数。
 
@@ -165,7 +200,7 @@ session_string_for_account_3
 
 ---
 
-## 5. 获取 `TG_FORWARD_BOT_TOKEN`
+## 6. 获取 `TG_FORWARD_BOT_TOKEN`
 
 如果你使用 `forward.mode: notify`，脚本会用 Telegram Bot API 给你发送一条摘要通知。
 
@@ -188,7 +223,7 @@ TG_FORWARD_BOT_TOKEN=<BotFather 给你的 token>
 
 ---
 
-## 6. 获取 `TG_FORWARD_CHAT_ID`
+## 7. 获取 `TG_FORWARD_CHAT_ID`
 
 `TG_FORWARD_CHAT_ID` 表示通知要发到哪里。
 
@@ -246,7 +281,7 @@ https://api.telegram.org/bot<你的 bot token>/getUpdates
 
 ---
 
-## 7. 获取 `peer`：和谁对话进行签到
+## 8. 获取 `peer`：和谁对话进行签到
 
 `peer` 写在 `tg/signins.yml` 中，例如：
 
@@ -267,7 +302,7 @@ peer: "@example_bot"
 
 ---
 
-## 8. 配置代理 `TG_PROXY`
+## 9. 配置代理 `TG_PROXY`
 
 如果 GitHub Actions 访问 Telegram 不稳定，可以配置代理 Secret：
 
@@ -291,9 +326,9 @@ http://
 
 ---
 
-## 9. 最小可用配置清单
+## 10. 最小可用配置清单
 
-至少需要：
+用户账号自动签到至少需要：
 
 ```text
 TG_API_ID
