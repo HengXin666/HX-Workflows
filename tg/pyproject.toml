@@ -6,8 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
   "PyYAML>=6.0.2",
-  "Telethon>=1.40.0",
-  "PySocks>=1.7.1",
+  "tg-signer[yaml]>=0.7.0",
 ]
 
 [tool.uv]
