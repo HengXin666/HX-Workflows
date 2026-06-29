@@ -7,6 +7,8 @@
 文档入口：
 
 ```text
+LOCAL_TG_SIGNER.md # 本地用 tg-signer 登录、测试一个账号、多账号
+LOCAL_QR_LOGIN.md  # 扫码登录，生成 TG_SESSION_STRINGS
 TG_SIGNER.md       # 推荐：tg-signer 登录、凭证保存、多账号、运行方式
 CONFIGURE.md       # 自定义 YAML 签到配置、转发过滤、多账号任务
 TELEGRAM_KEYS.md   # Telegram 参数说明、BotFather token 和 API ID 区别
@@ -76,6 +78,8 @@ uv run python runner.py run-all
 也就是：运行所有 `enabled: true` 的任务。
 
 ## 推荐使用流程：tg-signer
+
+如果你没有 `api_id/api_hash`，先看：[`LOCAL_TG_SIGNER.md`](./LOCAL_TG_SIGNER.md)。
 
 1. 本地登录：
 

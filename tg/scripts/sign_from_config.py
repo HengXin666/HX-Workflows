@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import json
 import os
 import re
+import subprocess
 import sys
 import traceback
 import urllib.parse
@@ -29,7 +31,11 @@ except Exception:  # pragma: no cover - only needed when proxy is used
     socks = None
 
 ROOT = Path(__file__).resolve().parents[1]
+WORKFLOWS_ROOT = ROOT.parent
 DEFAULT_CONFIG = ROOT / "signins.yml"
+DEFAULT_REPORT = ROOT / "reports" / "tg_signins.json"
+DEFAULT_API_ID = 611335
+DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 
 
 @dataclass
@@ -69,6 +75,17 @@ def required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"缺少 GitHub Secret / 环境变量: {name}")
     return value
+
+
+def telegram_api_config(api_id_secret: str, api_hash_secret: str) -> tuple[int, str]:
+    api_id_raw = os.environ.get(api_id_secret, "").strip()
+    api_hash = os.environ.get(api_hash_secret, "").strip()
+    if api_id_raw and api_hash:
+        return int(api_id_raw), api_hash
+    if not api_id_raw and not api_hash:
+        return DEFAULT_API_ID, DEFAULT_API_HASH
+    missing = api_hash_secret if api_id_raw else api_id_secret
+    raise RuntimeError(f"Telegram API 参数不完整，缺少环境变量: {missing}")
 
 
 def optional_env(name: str | None) -> str | None:
@@ -199,6 +216,53 @@ def build_summary(result: RunResult, selected_texts: list[str]) -> str:
     return "\n".join(lines)
 
 
+def result_texts(result: RunResult) -> list[str]:
+    return [message_text(msg) for msg in result.messages if message_text(msg)]
+
+
+def result_status_label(status: str) -> str:
+    return {
+        "success": "成功",
+        "failure": "失败",
+    }.get(status, status)
+
+
+def result_to_report_item(result: RunResult) -> dict[str, Any]:
+    return {
+        "account_index": result.account_index,
+        "status": result.status,
+        "matched": result.matched,
+        "summary": result.summary,
+        "messages": result_texts(result),
+    }
+
+
+def write_report(grouped: dict[str, list[RunResult]], path: Path) -> None:
+    report = {
+        "tasks": [
+            {
+                "id": job_id,
+                "accounts": [result_to_report_item(result) for result in results],
+            }
+            for job_id, results in grouped.items()
+        ]
+    }
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(report, ensure_ascii=False, indent=2), encoding="utf-8")
+    print(f"已写入 TG 签到报告: {path}")
+
+
+def send_report_with_emall(report_path: Path) -> None:
+    command = [
+        "uv",
+        "run",
+        "python",
+        "send_tg_report.py",
+        str(report_path),
+    ]
+    subprocess.run(command, cwd=WORKFLOWS_ROOT / "emall", check=True)
+
+
 async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str, Any]]) -> None:
     for action in actions:
         action_type = str(action.get("type", "")).strip().lower()
@@ -291,8 +355,7 @@ async def run_one_account(job: dict[str, Any], defaults: dict[str, Any], session
     api_hash_secret = str(job.get("api_hash_secret") or defaults.get("api_hash_secret") or "TG_API_HASH")
     proxy_secret = str(job.get("proxy_secret") or defaults.get("proxy_secret") or "TG_PROXY")
 
-    api_id = int(required_env(api_id_secret))
-    api_hash = required_env(api_hash_secret)
+    api_id, api_hash = telegram_api_config(api_id_secret, api_hash_secret)
     proxy = parse_proxy(optional_env(proxy_secret))
     peer = str(job.get("peer", "")).strip()
     if not peer:
@@ -376,6 +439,68 @@ async def run_job(config: dict[str, Any], job_id: str) -> int:
     return 0
 
 
+async def run_job_collect(config: dict[str, Any], job_id: str) -> tuple[list[RunResult], int]:
+    defaults = config.get("defaults", {}) or {}
+    jobs = config.get("jobs", []) or []
+    selected = next((job for job in jobs if str(job.get("id")) == job_id), None)
+    if not selected:
+        raise SystemExit(f"没有找到 signins job: {job_id}")
+    if not selected.get("enabled", False):
+        print(f"任务 {job_id} 当前 enabled=false，跳过。")
+        return [], 0
+
+    accounts_secret = str(selected.get("accounts_secret") or defaults.get("accounts_secret") or "TG_SESSION_STRINGS")
+    sessions = read_secret_lines(accounts_secret)
+
+    results: list[RunResult] = []
+    failures = 0
+    for index, session in enumerate(sessions, start=1):
+        try:
+            results.append(await run_one_account(selected, defaults, session, index))
+        except Exception as exc:
+            failures += 1
+            print(f"账号 #{index} 执行失败: {exc}", file=sys.stderr)
+            results.append(
+                RunResult(
+                    job_id=job_id,
+                    account_index=index,
+                    status="failure",
+                    matched=False,
+                    summary=str(exc),
+                    messages=[],
+                )
+            )
+
+    if failures:
+        print(f"任务 {job_id} 完成，但有 {failures}/{len(sessions)} 个账号失败。")
+        return results, 1
+    print(f"任务 {job_id} 全部账号执行成功。")
+    return results, 0
+
+
+async def run_enabled(config: dict[str, Any], mail: bool, report_path: Path) -> int:
+    jobs = [
+        str(job.get("id"))
+        for job in config.get("jobs", []) or []
+        if isinstance(job, dict) and job.get("enabled", False)
+    ]
+    if not jobs:
+        print("没有 enabled=true 的 signins job。")
+        return 0
+
+    grouped: dict[str, list[RunResult]] = {}
+    exit_code = 0
+    for job_id in jobs:
+        results, code = await run_job_collect(config, job_id)
+        grouped[job_id] = results
+        exit_code = max(exit_code, code)
+
+    write_report(grouped, report_path)
+    if mail:
+        send_report_with_emall(report_path)
+    return exit_code
+
+
 async def list_jobs(config: dict[str, Any]) -> int:
     for job in config.get("jobs", []) or []:
         status = "enabled" if job.get("enabled", False) else "disabled"
@@ -390,6 +515,9 @@ def main() -> int:
     sub.add_parser("list")
     run = sub.add_parser("run")
     run.add_argument("job_id")
+    run_enabled_parser = sub.add_parser("run-enabled")
+    run_enabled_parser.add_argument("--mail", action="store_true", help="运行后发送 HTML 邮件报告")
+    run_enabled_parser.add_argument("--report", default=str(DEFAULT_REPORT), help="输出 JSON 报告路径")
 
     args = parser.parse_args()
     config = load_yaml(Path(args.config).resolve())
@@ -397,6 +525,8 @@ def main() -> int:
         return asyncio.run(list_jobs(config))
     if args.cmd == "run":
         return asyncio.run(run_job(config, args.job_id))
+    if args.cmd == "run-enabled":
+        return asyncio.run(run_enabled(config, args.mail, Path(args.report).resolve()))
     raise AssertionError(args.cmd)
 
 

@@ -1,0 +1,9 @@
+[project]
+name = "hx-emall"
+version = "0.1.0"
+description = "Shared email helpers for HX workflows."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

@@ -49,6 +49,14 @@ jobs:
       TG_PROXY: ${{ secrets.TG_PROXY }}
       TG_FORWARD_BOT_TOKEN: ${{ secrets.TG_FORWARD_BOT_TOKEN }}
       TG_FORWARD_CHAT_ID: ${{ secrets.TG_FORWARD_CHAT_ID }}
+      SMTP_HOST: ${{ secrets.SMTP_HOST }}
+      SMTP_PORT: ${{ secrets.SMTP_PORT }}
+      SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+      SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+      SMTP_FROM: ${{ secrets.SMTP_FROM }}
+      SMTP_TO: ${{ secrets.SMTP_TO }}
+      SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
+      SMTP_STARTTLS: ${{ secrets.SMTP_STARTTLS }}
 
     steps:
       - name: 拉取仓库
@@ -63,7 +71,10 @@ jobs:
           python-version-file: tg/.python-version
 
       - name: 安装依赖
-        run: uv sync
+        run: |
+          uv sync
+          cd ../emall
+          uv sync
 
       - name: 查看任务列表
         if: ${{ github.event_name == 'workflow_dispatch' && inputs.mode == 'list' }}

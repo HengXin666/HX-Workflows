@@ -5,7 +5,10 @@ description = "Composable scheduled tasks for GitHub Actions."
 readme = "README.md"
 requires-python = ">=3.12"
 dependencies = [
+  "PySocks>=1.7.1",
   "PyYAML>=6.0.2",
+  "qrcode>=8.2",
+  "telethon>=1.42.0",
   "tg-signer[yaml]>=0.7.0",
 ]
 

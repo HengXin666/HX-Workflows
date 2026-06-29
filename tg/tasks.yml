@@ -13,7 +13,7 @@ tasks:
   # 冒烟测试：验证 workflow / uv / runner 是否正常。
   # 配置好真实签到任务后，可以改为 enabled: false。
   - id: tg-example
-    enabled: true
+    enabled: false
     schedule:
       - daily:00:15
     command: uv run python scripts/example_task.py
@@ -54,3 +54,11 @@ tasks:
       - daily:00:15
     command: uv run python scripts/sign_from_config.py run demo-user-forward
     timeout_minutes: 20
+
+  # freexzteam 每日签到。
+  - id: tg-sign-freexzteam
+    enabled: true
+    schedule:
+      - daily:00:15
+    command: uv run python scripts/sign_from_config.py run-enabled --mail
+    timeout_minutes: 30

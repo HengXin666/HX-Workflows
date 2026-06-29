@@ -61,6 +61,30 @@ defaults:
     max_messages: 3
 
 jobs:
+  # freexzteam 每日签到：给 bot 发送菜单文案。
+  - id: freexzteam-daily-sign
+    enabled: true
+    peer: "@freexzteam_bot"
+    accounts_secret: TG_SESSION_STRINGS
+    actions:
+      - type: send
+        text: "📅 每日签到"
+      - type: wait
+        seconds: 5
+    collect:
+      last_messages: 3
+    forward:
+      enabled: false
+      include:
+        contains:
+          - "签到成功"
+          - "今日已签到"
+          - "积分"
+        regex: []
+      exclude:
+        contains: []
+        regex: []
+
   # 示例 1：给 bot 发送“签到”。默认关闭，确认参数后再改 enabled: true。
   - id: demo-send-sign
     enabled: false
