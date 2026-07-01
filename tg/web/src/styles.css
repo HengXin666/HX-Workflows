@@ -456,7 +456,7 @@ textarea:focus {
 }
 
 .flow-toolbar .field {
-  width: 280px;
+  width: 220px;
   padding: 0;
 }
 
@@ -464,6 +464,161 @@ textarea:focus {
   width: auto;
   margin: 0;
   text-align: left;
+}
+
+.workflow-picker,
+.node-inline-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.workflow-picker {
+  flex: 1 1 280px;
+  flex-wrap: wrap;
+}
+
+.workflow-picker span {
+  flex: 0 0 auto;
+  color: #9aabc1;
+  font-size: 12px;
+  font-weight: 700;
+}
+
+.workflow-picker em {
+  color: #708299;
+  font-size: 12px;
+  font-style: normal;
+}
+
+.node-palette {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  min-height: 0;
+  border: 1px solid #172338;
+  border-radius: 8px;
+  background: rgba(10, 16, 26, 0.9);
+  overflow: hidden;
+}
+
+.node-palette-head {
+  border-bottom: 1px solid #172338;
+  padding: 12px;
+}
+
+.node-palette-head strong,
+.node-palette-head span {
+  display: block;
+}
+
+.node-palette-head strong {
+  color: #f8fbff;
+  font-size: 15px;
+}
+
+.node-palette-head span {
+  margin-top: 3px;
+  color: #8392a8;
+  font-size: 12px;
+}
+
+.node-toolbox {
+  display: grid;
+  align-content: start;
+  gap: 6px;
+  min-width: 0;
+  min-height: 0;
+  padding: 10px;
+  overflow-x: hidden;
+  overflow-y: auto;
+}
+
+.node-tool {
+  --tool-accent: #2f85d3;
+  display: grid;
+  grid-template-columns: 30px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  width: 100%;
+  min-height: 42px;
+  border-color: color-mix(in srgb, var(--tool-accent) 56%, #243247);
+  padding: 6px 8px;
+  background: linear-gradient(180deg, color-mix(in srgb, var(--tool-accent) 16%, #111a28), #0d1624);
+  cursor: grab;
+}
+
+.node-tool:active {
+  cursor: grabbing;
+}
+
+.node-tool i {
+  display: grid;
+  width: 28px;
+  height: 28px;
+  place-items: center;
+  border-radius: 8px;
+  color: #fff;
+  background: color-mix(in srgb, var(--tool-accent) 64%, #0d1624);
+}
+
+.node-tool svg {
+  width: 17px;
+  height: 17px;
+  fill: currentColor;
+}
+
+.node-tool span {
+  min-width: 0;
+}
+
+.node-tool b {
+  display: block;
+  color: #f8fbff;
+  font-size: 12px;
+}
+
+.node-tool small {
+  display: block;
+  color: #8fa2bb;
+  font-size: 10px;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-tool.kind-open {
+  --tool-accent: #8bdb81;
+}
+
+.node-tool.kind-task {
+  --tool-accent: #60a5fa;
+}
+
+.node-tool.kind-send {
+  --tool-accent: #d7a947;
+}
+
+.node-tool.kind-parse {
+  --tool-accent: #c084fc;
+}
+
+.node-tool.kind-join {
+  --tool-accent: #34d399;
+}
+
+.node-tool.kind-forward {
+  --tool-accent: #f87171;
+}
+
+.node-tool.kind-link {
+  --tool-accent: #22d3ee;
+}
+
+.node-inline-actions {
+  padding: 0 16px 14px;
 }
 
 .flow-canvas {
@@ -501,7 +656,22 @@ textarea:focus {
   padding: 0 0 13px;
   background: linear-gradient(180deg, #101827, #0b1422);
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.32);
-  overflow: hidden;
+  overflow: visible;
+}
+
+.flow-node::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  z-index: 0;
+  border-radius: 8px;
+  background: linear-gradient(180deg, #101827, #0b1422);
+  pointer-events: none;
+}
+
+.flow-node > :not(.react-flow__handle) {
+  position: relative;
+  z-index: 1;
 }
 
 .flow-node.selected {
@@ -756,6 +926,12 @@ textarea:focus {
   --node-border: #8f3136;
 }
 
+.flow-node.kind-join {
+  --node-accent: #34d399;
+  --node-accent-soft: #123428;
+  --node-border: #2f8466;
+}
+
 .flow-node.kind-link {
   --node-accent: #22d3ee;
   --node-accent-soft: #0c3440;
@@ -764,14 +940,30 @@ textarea:focus {
 
 .react-flow__handle {
   background: var(--node-accent, #65c3ff);
-  border: 2px solid #07111f;
-  width: 10px;
-  height: 10px;
-  z-index: 3;
+  border: 3px solid #07111f;
+  width: 30px;
+  height: 30px;
+  box-shadow: 0 0 0 3px rgba(7, 17, 31, 0.88), 0 6px 18px rgba(0, 0, 0, 0.42);
+  z-index: 10;
+}
+
+.react-flow__handle::after {
+  content: "";
+  position: absolute;
+  inset: -12px;
 }
 
 .react-flow__edge-path {
   stroke: #65c3ff;
+}
+
+.react-flow__edge-interaction {
+  stroke-width: 28;
+}
+
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: #f6c350;
+  stroke-width: 3;
 }
 
 .react-flow__controls,
@@ -803,6 +995,59 @@ textarea:focus {
   overflow: auto;
 }
 
+.compile-status {
+  display: grid;
+  gap: 8px;
+  margin: 16px;
+  border: 1px solid #27405f;
+  border-radius: 8px;
+  padding: 10px;
+  background: #08111f;
+}
+
+.compile-status strong {
+  color: #cfe0f3;
+  font-size: 13px;
+}
+
+.compile-status.ok {
+  border-color: #2f7f58;
+}
+
+.compile-status.warn {
+  border-color: #8f7230;
+}
+
+.compile-status.bad {
+  border-color: #8b3f4a;
+}
+
+.compile-issues {
+  display: grid;
+  gap: 5px;
+}
+
+.compile-issues button {
+  width: 100%;
+  justify-content: flex-start;
+  border-color: #253850;
+  padding: 7px 8px;
+  background: #0d1624;
+  color: #b9c9dc;
+  font-size: 12px;
+  text-align: left;
+}
+
+.compile-issues button.error {
+  border-color: #7d3845;
+  color: #ffb7c0;
+}
+
+.compile-issues button.warning {
+  border-color: #7c642a;
+  color: #f4d58a;
+}
+
 .inspector > button {
   margin: 0 16px 16px;
 }
@@ -830,6 +1075,15 @@ textarea:focus {
 
 .context-menu button:hover {
   background: #14243a;
+}
+
+.context-menu-hint {
+  max-width: 220px;
+  border-bottom: 1px solid #1d2f47;
+  padding: 6px 8px 8px;
+  color: #f4d58a;
+  font-size: 12px;
+  line-height: 1.4;
 }
 
 .workflow-item {

@@ -510,45 +510,105 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
             next_map[source] = target
 
     start = next((node for node in nodes if (node.get("data") or {}).get("kind") == "task"), nodes[0] if nodes else None)
-    job_id = str(start.get("data", {}).get("taskId") or flow.get("id") or "web-flow") if start else "web-flow"
-    actions: list[dict[str, Any]] = []
-    peer = ""
-    collect_limit = 5
-    include_contains: list[str] = []
-    forward: dict[str, Any] = {"enabled": False}
+    jobs: list[dict[str, Any]] = []
+    seen_job_ids: dict[str, int] = {}
 
-    current = str(start.get("id")) if start else ""
-    visited: set[str] = set()
-    while current and current not in visited:
-        visited.add(current)
-        node = by_id.get(current, {})
-        data = node.get("data", {}) or {}
-        node_type = data.get("kind") or node.get("type")
-        if node_type == "open":
-            peer = str(data.get("peer") or peer)
-            actions.append({"type": "open", "peer": peer, "regex": bool(data.get("regex"))})
-        elif node_type == "send":
-            text = str(data.get("command") or "") if str(data.get("sendMode") or "") == "command" else str(data.get("text") or "")
-            actions.append({"type": "send", "text": text})
-        elif node_type == "parse":
-            collect_limit = int(data.get("limit") or collect_limit)
-            pattern = str(data.get("pattern") or "")
-            if pattern:
-                include_contains.append(pattern)
-            actions.append({"type": "parse", "pattern": pattern, "regex": bool(data.get("regex")), "save_as": str(data.get("saveAs") or "last_parse")})
-        elif node_type == "forward":
-            forward = {
-                "enabled": True,
-                "mode": "user_forward",
-                "to_peer": str(data.get("toPeer") or ""),
-                "when": ["matched", "failure"],
-                "include": {"contains": include_contains or ["签到"], "regex": []},
-                "exclude": {"contains": [], "regex": []},
-            }
-            actions.append({"type": "forward", "to_peer": str(data.get("toPeer") or ""), "source": str(data.get("source") or "last_parse")})
-        elif node_type == "link":
-            actions.append({"type": "open_link", "url": str(data.get("url") or "")})
-        current = next_map.get(current, "")
+    def unique_job_id(raw: str) -> str:
+        value = raw or str(flow.get("id") or "web-flow")
+        count = seen_job_ids.get(value, 0)
+        seen_job_ids[value] = count + 1
+        return value if count == 0 else f"{value}-{count + 1}"
+
+    def compile_job(start_node: dict[str, Any], inherited_peer: str = "") -> tuple[dict[str, Any], str, str]:
+        data = start_node.get("data", {}) or {}
+        job_id = unique_job_id(str(data.get("taskId") or flow.get("id") or "web-flow"))
+        actions: list[dict[str, Any]] = []
+        peer = inherited_peer
+        collect_limit = 5
+        include_contains: list[str] = []
+        forward: dict[str, Any] = {"enabled": False}
+
+        current = str(start_node.get("id"))
+        visited: set[str] = set()
+        next_start = ""
+        while current and current not in visited:
+            visited.add(current)
+            node = by_id.get(current, {})
+            data = node.get("data", {}) or {}
+            node_type = data.get("kind") or node.get("type")
+            if node_type == "task" and current != str(start_node.get("id")):
+                next_start = current
+                break
+            if node_type == "open":
+                peer = str(data.get("peer") or peer)
+                actions.append({"type": "open", "node_id": current, "peer": peer, "regex": bool(data.get("regex"))})
+            elif node_type == "send":
+                text = str(data.get("command") or "") if str(data.get("sendMode") or "") == "command" else str(data.get("text") or "")
+                actions.append({"type": "send", "node_id": current, "text": text})
+            elif node_type == "parse":
+                collect_limit = int(data.get("limit") or collect_limit)
+                pattern = str(data.get("pattern") or "")
+                if pattern:
+                    include_contains.append(pattern)
+                parse_mode = str(data.get("parseMode") or data.get("mode") or "match")
+                actions.append({
+                    "type": "parse",
+                    "node_id": current,
+                    "pattern": pattern,
+                    "regex": bool(data.get("regex")),
+                    "save_as": str(data.get("saveAs") or "last_parse"),
+                    "extract": str(data.get("extract") or "messages"),
+                    "after_send": parse_mode == "after_send" or bool(data.get("afterSend")),
+                    "wait_seconds": float(data.get("waitSeconds") or 3),
+                })
+            elif node_type == "forward":
+                forward = {
+                    "enabled": True,
+                    "mode": "user_forward",
+                    "to_peer": str(data.get("toPeer") or ""),
+                    "when": ["matched", "failure"],
+                    "include": {"contains": include_contains or ["签到"], "regex": []},
+                    "exclude": {"contains": [], "regex": []},
+                }
+                actions.append({"type": "forward", "node_id": current, "to_peer": str(data.get("toPeer") or ""), "source": str(data.get("source") or "last_parse")})
+            elif node_type == "link":
+                actions.append({"type": "open_link", "node_id": current, "url": str(data.get("url") or "")})
+            elif node_type == "join":
+                source_mode = str(data.get("sourceMode") or "manual")
+                actions.append({
+                    "type": "join",
+                    "node_id": current,
+                    "target": str(data.get("target") or ""),
+                    "source": str(data.get("source") or "") if source_mode == "variable" else "",
+                })
+            current = next_map.get(current, "")
+
+        return {
+            "id": job_id,
+            "node_id": str(start_node.get("id")),
+            "enabled": True,
+            "peer": peer or "@example_bot",
+            "accounts_secret": "TG_SESSION_STRINGS",
+            "actions": actions or [{"type": "send", "text": "签到"}, {"type": "wait", "seconds": 5}],
+            "collect": {"last_messages": collect_limit},
+            "forward": forward,
+        }, next_start, peer
+
+    current_start = start
+    inherited_peer = ""
+    visited_starts: set[str] = set()
+    while current_start and str(current_start.get("id")) not in visited_starts:
+        visited_starts.add(str(current_start.get("id")))
+        job, next_start_id, inherited_peer = compile_job(current_start, inherited_peer)
+        jobs.append(job)
+        current_start = by_id.get(next_start_id) if next_start_id else None
+    default_include = [
+        str(action.get("pattern"))
+        for job in jobs
+        for action in job.get("actions", [])
+        if action.get("type") == "parse" and str(action.get("pattern") or "")
+    ]
+    default_collect_limit = max((int(job.get("collect", {}).get("last_messages", 5) or 5) for job in jobs), default=5)
 
     return {
         "defaults": {
@@ -562,22 +622,12 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                 "when": ["failure", "matched"],
                 "bot_token_secret": "TG_FORWARD_BOT_TOKEN",
                 "chat_id_secret": "TG_FORWARD_CHAT_ID",
-                "include": {"contains": include_contains or ["签到成功", "积分"], "regex": []},
+                "include": {"contains": default_include or ["签到成功", "积分"], "regex": []},
                 "exclude": {"contains": ["广告"], "regex": []},
-                "max_messages": collect_limit,
+                "max_messages": default_collect_limit,
             },
         },
-        "jobs": [
-            {
-                "id": job_id,
-                "enabled": True,
-                "peer": peer or "@example_bot",
-                "accounts_secret": "TG_SESSION_STRINGS",
-                "actions": actions or [{"type": "send", "text": "签到"}, {"type": "wait", "seconds": 5}],
-                "collect": {"last_messages": collect_limit},
-                "forward": forward,
-            }
-        ],
+        "jobs": jobs,
     }
 
 
@@ -635,7 +685,15 @@ def ordered_node_ids(flow: dict[str, Any]) -> list[str]:
     return ordered
 
 
-def run_flow(job_id: str, flow: dict[str, Any], alt_out: Path, account_limit: int | None = None, proxy: str | None = None) -> None:
+def run_flow(
+    job_id: str,
+    flow: dict[str, Any],
+    alt_out: Path,
+    main_out: Path,
+    account_limit: int | None = None,
+    account_ids: list[str] | None = None,
+    proxy: str | None = None,
+) -> None:
     ordered = ordered_node_ids(flow)
     with jobs_lock:
         run_jobs[job_id].active_node = ordered[0] if ordered else None
@@ -644,13 +702,17 @@ def run_flow(job_id: str, flow: dict[str, Any], alt_out: Path, account_limit: in
         config_path = Path(tmp) / "signins.yml"
         config_path.write_text(yaml.safe_dump(flow_to_signins(flow), allow_unicode=True, sort_keys=False), encoding="utf-8")
         env = os.environ.copy()
-        sessions = read_lines(alt_out)
-        if account_limit and account_limit > 0:
+        selected_ids = set(account_ids or [])
+        if selected_ids:
+            sessions = [session for account, session in sessions_with_accounts(alt_out, main_out) if account.get("id") in selected_ids]
+        else:
+            sessions = read_lines(alt_out)
+        if not selected_ids and account_limit and account_limit > 0:
             sessions = sessions[:account_limit]
         env["TG_SESSION_STRINGS"] = "\n".join(sessions)
         if proxy:
             env["TG_PROXY"] = proxy
-        command = ["uv", "run", "python", "scripts/sign_from_config.py", "--config", str(config_path), "run-enabled"]
+        command = ["uv", "run", "python", "-u", "scripts/sign_from_config.py", "--config", str(config_path), "run-enabled"]
         try:
             with jobs_lock:
                 run_jobs[job_id].output += f"$ {' '.join(command)}\n"
@@ -670,10 +732,19 @@ def run_flow(job_id: str, flow: dict[str, Any], alt_out: Path, account_limit: in
             for line in proc.stdout:
                 with jobs_lock:
                     run_jobs[job_id].output += line
-                    if ordered:
-                        done_count = min(len(ordered), max(1, len(run_jobs[job_id].output.splitlines()) // 8))
-                        run_jobs[job_id].completed_nodes = ordered[: max(0, done_count - 1)]
-                        run_jobs[job_id].active_node = ordered[min(done_count - 1, len(ordered) - 1)]
+                    marker = re.search(r"^::node::([^:]+)::(start|done|error)::", line.strip())
+                    if marker:
+                        node_id, state = marker.group(1), marker.group(2)
+                        if state == "start":
+                            run_jobs[job_id].active_node = node_id
+                        elif state == "done":
+                            if node_id not in run_jobs[job_id].completed_nodes:
+                                run_jobs[job_id].completed_nodes.append(node_id)
+                            if run_jobs[job_id].active_node == node_id:
+                                run_jobs[job_id].active_node = None
+                        elif state == "error":
+                            run_jobs[job_id].failed_node = node_id
+                            run_jobs[job_id].active_node = None
                 notify_run(job_id)
             try:
                 return_code = proc.wait(timeout=3600)
@@ -869,11 +940,12 @@ class Handler(BaseHTTPRequestHandler):
             flow = body.get("workflow") or body
             account_limit_raw = body.get("account_limit")
             account_limit = int(account_limit_raw) if account_limit_raw else None
+            account_ids = [str(item) for item in body.get("account_ids", []) if str(item)]
             proxy = str(body.get("proxy") or os.environ.get("TG_PROXY") or "")
             job_id = uuid.uuid4().hex
             with jobs_lock:
                 run_jobs[job_id] = RunJob(id=job_id)
-            threading.Thread(target=lambda: run_flow(job_id, flow, self.alt_out, account_limit, proxy), daemon=True).start()
+            threading.Thread(target=lambda: run_flow(job_id, flow, self.alt_out, self.main_out, account_limit, account_ids, proxy), daemon=True).start()
             self.send_json({"id": job_id, "status": "running"})
             return
         if parsed.path == "/api/messages/send":
