@@ -264,14 +264,31 @@ def send_report_with_emall(report_path: Path) -> None:
 
 
 async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str, Any]]) -> None:
+    current_peer = peer
+    last_messages: list[Any] = []
+    context: dict[str, Any] = {}
     for action in actions:
         action_type = str(action.get("type", "")).strip().lower()
-        if action_type == "send":
+        if action_type == "open":
+            current_peer = str(action.get("peer") or current_peer).strip()
+            if not current_peer:
+                raise RuntimeError("open action 缺少 peer")
+            print(f"打开对话: {current_peer}")
+            await client.get_entity(current_peer)
+
+        elif action_type == "open_link":
+            url = str(action.get("url", "")).strip()
+            if not url:
+                raise RuntimeError("open_link action 缺少 url")
+            print(f"打开链接: {url}")
+            await client.send_message("me", url)
+
+        elif action_type == "send":
             text = str(action.get("text", ""))
             if not text:
                 raise RuntimeError("send action 缺少 text")
-            print(f"发送消息到 {peer}: {text}")
-            await client.send_message(peer, text)
+            print(f"发送消息到 {current_peer}: {text}")
+            await client.send_message(current_peer, text)
 
         elif action_type == "click":
             text = str(action.get("text", ""))
@@ -279,7 +296,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                 raise RuntimeError("click action 缺少 text")
             search_limit = int(action.get("search_limit", 5))
             print(f"查找并点击按钮: {text}")
-            messages = await client.get_messages(peer, limit=search_limit)
+            messages = await client.get_messages(current_peer, limit=search_limit)
             clicked = False
             for msg in messages:
                 try:
@@ -297,10 +314,36 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             print(f"等待 {seconds} 秒")
             await asyncio.sleep(seconds)
 
+        elif action_type == "parse":
+            pattern = str(action.get("pattern", ""))
+            limit = int(action.get("limit", 5) or 5)
+            use_regex = bool(action.get("regex", True))
+            save_as = str(action.get("save_as", "last_parse"))
+            print(f"解析最近 {limit} 条消息: {pattern}")
+            last_messages = list(await client.get_messages(current_peer, limit=limit))
+            matched = []
+            for msg in last_messages:
+                text = message_text(msg)
+                if not pattern or (re.search(pattern, text, flags=re.I | re.M) if use_regex else pattern in text):
+                    matched.append(msg)
+            context[save_as] = matched
+            context["last_parse"] = matched
+            print(f"解析命中 {len(matched)} 条消息")
+
+        elif action_type == "forward":
+            to_peer = str(action.get("to_peer", "")).strip()
+            if not to_peer:
+                raise RuntimeError("forward action 缺少 to_peer")
+            source = str(action.get("source", "last_parse"))
+            selected = context.get(source) or context.get("last_parse") or last_messages
+            print(f"转发 {len(selected)} 条消息到 {to_peer}")
+            if selected:
+                await client.forward_messages(to_peer, selected)
+
         else:
             raise RuntimeError(f"不支持的 action type: {action_type}")
 
-        if action_type != "wait" and action.get("wait_seconds"):
+        if action_type not in {"wait", "open"} and action.get("wait_seconds"):
             seconds = float(action.get("wait_seconds", 1))
             print(f"动作后等待 {seconds} 秒")
             await asyncio.sleep(seconds)
