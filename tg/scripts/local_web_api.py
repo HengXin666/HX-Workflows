@@ -36,6 +36,7 @@ LOG_DIR = ROOT / "logs"
 DEFAULT_ALT_OUT = ROOT / "sessions" / "tg_session_strings.txt"
 DEFAULT_MAIN_OUT = ROOT / "sessions" / "tg_main_session_string.txt"
 DEFAULT_WORKFLOWS = ROOT / "sessions" / "web_workflows.json"
+GITHUB_WORKFLOW = ROOT.parent / ".github" / "workflows" / "tg-orchestrator.yml"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 COMMAND_RE = re.compile(r"(?<!\S)/[A-Za-z0-9_]{1,32}")
@@ -551,11 +552,13 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     text = str(data.get("text") if data.get("text") is not None else data.get("cmd", ""))
                 actions.append({"type": "send", "node_id": current, "text": text})
             elif node_type == "parse":
-                collect_limit = int(data.get("limit") or collect_limit)
                 pattern = str(data.get("pattern") or "")
                 if pattern:
                     include_contains.append(pattern)
                 parse_mode = str(data.get("parseMode") or data.get("mode") or "match")
+                after_send = parse_mode == "after_send" or bool(data.get("afterSend"))
+                if not after_send:
+                    collect_limit = int(data.get("limit") or collect_limit)
                 actions.append({
                     "type": "parse",
                     "node_id": current,
@@ -563,7 +566,7 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     "regex": bool(data.get("regex")),
                     "save_as": str(data.get("saveAs") or "last_parse"),
                     "extract": str(data.get("extract") or "messages"),
-                    "after_send": parse_mode == "after_send" or bool(data.get("afterSend")),
+                    "after_send": after_send,
                     "wait_seconds": float(data.get("waitSeconds") or 3),
                 })
             elif node_type == "forward":
@@ -663,12 +666,24 @@ def write_workflows(path: Path, workflows: list[dict[str, Any]]) -> None:
     path.write_text(json.dumps(workflows, ensure_ascii=False, indent=2), encoding="utf-8")
 
 
-def save_workflow(path: Path, flow: dict[str, Any]) -> dict[str, Any]:
+def compile_flow_outputs(flow: dict[str, Any]) -> dict[str, str]:
+    github = GITHUB_WORKFLOW.read_text(encoding="utf-8") if GITHUB_WORKFLOW.exists() else ""
+    return {
+        "signins": yaml.safe_dump(flow_to_signins(flow), allow_unicode=True, sort_keys=False),
+        "tasks": yaml.safe_dump(flow_to_tasks(flow), allow_unicode=True, sort_keys=False),
+        "github": github,
+    }
+
+
+def save_workflow(path: Path, flow: dict[str, Any], previous_id: str = "") -> dict[str, Any]:
     workflows = read_workflows(path)
     flow_id = str(flow.get("id") or uuid.uuid4().hex[:10])
     flow["id"] = flow_id
     flow["updated_at"] = int(time.time())
-    workflows = [item for item in workflows if str(item.get("id")) != flow_id]
+    replaced_ids = {flow_id}
+    if previous_id:
+        replaced_ids.add(previous_id)
+    workflows = [item for item in workflows if str(item.get("id")) not in replaced_ids]
     workflows.append(flow)
     write_workflows(path, workflows)
     return flow
@@ -933,13 +948,12 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json({"id": job_id, "status": "pending"})
             return
         if parsed.path == "/api/workflows":
-            flow = save_workflow(self.workflows, body)
+            previous_id = str(body.pop("previous_id", "") or "")
+            flow = save_workflow(self.workflows, body, previous_id)
             self.send_json({"workflow": flow})
             return
         if parsed.path == "/api/workflows/compile":
-            signins = yaml.safe_dump(flow_to_signins(body), allow_unicode=True, sort_keys=False)
-            tasks = yaml.safe_dump(flow_to_tasks(body), allow_unicode=True, sort_keys=False)
-            self.send_json({"signins": signins, "tasks": tasks})
+            self.send_json(compile_flow_outputs(body))
             return
         if parsed.path == "/api/run/start":
             flow = body.get("workflow") or body

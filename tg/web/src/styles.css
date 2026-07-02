@@ -920,6 +920,30 @@ textarea:focus {
   --node-border: #6e4ca1;
 }
 
+.flow-node.kind-parse .parse-mode-badge {
+  width: max-content;
+  max-width: 100%;
+  border: 1px solid #6e4ca1;
+  border-radius: 999px;
+  padding: 3px 8px;
+  color: #e9d5ff;
+  background: #211330;
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.flow-node.kind-parse .parse-mode-badge.after {
+  border-color: #2f9e88;
+  color: #b7f7e8;
+  background: #102d2a;
+}
+
+.flow-node.kind-parse .parse-mode-badge.match {
+  border-color: #8a6825;
+  color: #ffe1a3;
+  background: #2d2110;
+}
+
 .flow-node.kind-forward {
   --node-accent: #f87171;
   --node-accent-soft: #3a171a;

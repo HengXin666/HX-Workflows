@@ -55,6 +55,7 @@ type Workflow = {
 type CompileOutput = {
   signins: string;
   tasks: string;
+  github?: string;
 };
 
 type CompileIssue = {
@@ -369,6 +370,8 @@ function FlowNode({ data, selected }: NodeProps) {
   const readonly = Boolean(nodeData.readonly);
   const runState = String(nodeData.runState || "idle");
   const title = String(nodeData.label || "节点");
+  const parseMode = String(nodeData.parseMode || "match");
+  const extractMode = String(nodeData.extract || "messages");
   const detail =
     kind === "task"
       ? String(nodeData.name || nodeData.taskId || "")
@@ -379,9 +382,9 @@ function FlowNode({ data, selected }: NodeProps) {
             ? String(nodeData.command || "未选择命令/按钮")
             : String(nodeData.text || "")
           : kind === "parse"
-            ? String(nodeData.parseMode || "match") === "after_send"
-              ? "发送后回执"
-              : String(nodeData.extract || "messages") === "messages" ? String(nodeData.pattern || "") : String(nodeData.saveAs || "last_links")
+            ? parseMode === "after_send"
+              ? `发送后的消息 -> ${String(nodeData.saveAs || "last_parse")}`
+              : extractMode === "messages" ? String(nodeData.pattern || "") : String(nodeData.saveAs || "last_links")
             : kind === "forward"
               ? String(nodeData.toPeer || "")
               : kind === "join"
@@ -399,6 +402,7 @@ function FlowNode({ data, selected }: NodeProps) {
         <strong>{title}</strong>
       </div>
       {readonly ? <div className="run-badge">{runState}</div> : null}
+      {kind === "parse" ? <div className={`parse-mode-badge ${parseMode === "after_send" ? "after" : "match"}`}>{parseMode === "after_send" ? "解析发送后的消息" : "解析最近消息"}</div> : null}
       <span>{detail || "未配置"}</span>
       {!readonly ? <div className="node-inline nodrag nopan">
         {kind === "task" ? (
@@ -440,24 +444,30 @@ function FlowNode({ data, selected }: NodeProps) {
         ) : null}
         {kind === "parse" ? (
           <>
-            <NodeTextInput value={String(nodeData.pattern || "")} onCommit={(value) => emitText("pattern", value)} />
-            <label>
-              <input type="checkbox" checked={Boolean(nodeData.regex)} onChange={(event) => emitChange({ regex: event.target.checked })} />
-              正则匹配
-            </label>
-            <div className="regex-test">
-              <span>测试回执</span>
-              <NodeTextInput multiline value={String(nodeData.testText || "")} onCommit={(value) => emitText("testText", value)} />
-              {(() => {
-                const result = testPattern(String(nodeData.pattern || ""), String(nodeData.testText || ""), Boolean(nodeData.regex));
-                return (
-                  <>
-                    <b className={result.ok ? "match-ok" : "match-bad"}>{result.error || (result.ok ? "匹配" : "不匹配")}</b>
-                    <HighlightText text={String(nodeData.testText || "")} ranges={result.ranges} />
-                  </>
-                );
-              })()}
-            </div>
+            {parseMode === "after_send" ? (
+              <NodeTextInput value={String(nodeData.saveAs || "last_parse")} onCommit={(value) => emitText("saveAs", value)} />
+            ) : (
+              <>
+                <NodeTextInput value={String(nodeData.pattern || "")} onCommit={(value) => emitText("pattern", value)} />
+                <label>
+                  <input type="checkbox" checked={Boolean(nodeData.regex)} onChange={(event) => emitChange({ regex: event.target.checked })} />
+                  正则匹配
+                </label>
+                <div className="regex-test">
+                  <span>测试回执</span>
+                  <NodeTextInput multiline value={String(nodeData.testText || "")} onCommit={(value) => emitText("testText", value)} />
+                  {(() => {
+                    const result = testPattern(String(nodeData.pattern || ""), String(nodeData.testText || ""), Boolean(nodeData.regex));
+                    return (
+                      <>
+                        <b className={result.ok ? "match-ok" : "match-bad"}>{result.error || (result.ok ? "匹配" : "不匹配")}</b>
+                        <HighlightText text={String(nodeData.testText || "")} ranges={result.ranges} />
+                      </>
+                    );
+                  })()}
+                </div>
+              </>
+            )}
           </>
         ) : null}
         {kind === "forward" ? <NodeTextInput value={String(nodeData.toPeer || "")} onCommit={(value) => emitText("toPeer", value)} /> : null}
@@ -867,6 +877,7 @@ function NodeEditor({
   if (!node) return <div className="empty">选择一个节点进行配置</div>;
   const data = node.data as Record<string, unknown>;
   const kind = String(data.kind || "task");
+  const parseMode = String(data.parseMode || "match");
   const set = (key: string, value: string) => updateNode(node.id, { [key]: value });
   return (
     <div className="node-editor">
@@ -954,13 +965,16 @@ function NodeEditor({
         <>
           <SelectField
             label="解析范围"
-            value={String(data.parseMode || "match")}
+            value={parseMode}
             onChange={(value) => updateNode(node.id, { parseMode: value })}
             options={[
-              { value: "after_send", label: "无条件解析发送后的消息" },
+              { value: "after_send", label: "解析发送后的消息" },
               { value: "match", label: "按表达式匹配最近消息" },
             ]}
           />
+          {parseMode === "after_send" ? (
+            <div className="node-context-hint strong">只处理当前发送节点之后收到的新消息，不按最近消息条数扫描。</div>
+          ) : null}
           <SelectField
             label="提取模式"
             value={String(data.extract || "messages")}
@@ -971,27 +985,35 @@ function NodeEditor({
               { value: "join_links", label: "提取加群/账号链接" },
             ]}
           />
-          <Field label="判断表达式" value={String(data.pattern || "")} onChange={(value) => set("pattern", value)} />
-          <Field label="读取消息数" type="number" value={Number(data.limit || 5)} onChange={(value) => updateNode(node.id, { limit: Number(value) || 5 })} />
+          {parseMode === "match" ? (
+            <>
+              <Field label="判断表达式" value={String(data.pattern || "")} onChange={(value) => set("pattern", value)} />
+              <Field label="读取消息数" type="number" value={Number(data.limit || 5)} onChange={(value) => updateNode(node.id, { limit: Number(value) || 5 })} />
+            </>
+          ) : null}
           <Field label="保存变量" value={String(data.saveAs || (String(data.extract || "messages") === "messages" ? "last_parse" : "last_links"))} onChange={(value) => set("saveAs", value)} />
-          <label className="switch inline">
-            <input
-              type="checkbox"
-              checked={Boolean(data.regex)}
-              onChange={(event) => updateNode(node.id, { regex: event.target.checked })}
-            />
-            <span>使用正则表达式</span>
-          </label>
-          <TextArea label="测试回执消息" value={String(data.testText || "")} onChange={(value) => set("testText", value)} />
-          {(() => {
-            const result = testPattern(String(data.pattern || ""), String(data.testText || ""), Boolean(data.regex));
-            return (
-              <div className={result.ok ? "test-result ok" : "test-result bad"}>
-                {result.error || (result.ok ? "表达式匹配成功" : "表达式未匹配")}
-                <HighlightText text={String(data.testText || "")} ranges={result.ranges} />
-              </div>
-            );
-          })()}
+          {parseMode === "match" ? (
+            <>
+              <label className="switch inline">
+                <input
+                  type="checkbox"
+                  checked={Boolean(data.regex)}
+                  onChange={(event) => updateNode(node.id, { regex: event.target.checked })}
+                />
+                <span>使用正则表达式</span>
+              </label>
+              <TextArea label="测试回执消息" value={String(data.testText || "")} onChange={(value) => set("testText", value)} />
+              {(() => {
+                const result = testPattern(String(data.pattern || ""), String(data.testText || ""), Boolean(data.regex));
+                return (
+                  <div className={result.ok ? "test-result ok" : "test-result bad"}>
+                    {result.error || (result.ok ? "表达式匹配成功" : "表达式未匹配")}
+                    <HighlightText text={String(data.testText || "")} ranges={result.ranges} />
+                  </div>
+                );
+              })()}
+            </>
+          ) : null}
         </>
       ) : null}
       {kind === "forward" ? (
@@ -1035,8 +1057,9 @@ function WorkflowApp() {
   const [selectedNodeId, setSelectedNodeId] = useState<string>("task");
   const [workflows, setWorkflows] = useState<Workflow[]>([]);
   const [workflowId, setWorkflowId] = useState("daily-sign");
+  const [savedWorkflowId, setSavedWorkflowId] = useState("");
   const [workflowName, setWorkflowName] = useState("每日签到");
-  const [compileOutput, setCompileOutput] = useState<CompileOutput>({ signins: "", tasks: "" });
+  const [compileOutput, setCompileOutput] = useState<CompileOutput>({ signins: "", tasks: "", github: "" });
   const [compileStatus, setCompileStatus] = useState("等待编译");
   const [compileIssues, setCompileIssues] = useState<CompileIssue[]>([]);
   const [runJob, setRunJob] = useState<RunJob | null>(null);
@@ -1165,7 +1188,7 @@ function WorkflowApp() {
     setCompileIssues(localCompileIssues);
     if (hasCompileErrors) {
       setCompileStatus("图中存在错误，未生成 YAML");
-      setCompileOutput({ signins: "", tasks: "" });
+      setCompileOutput({ signins: "", tasks: "", github: "" });
       return;
     }
     const controller = new AbortController();
@@ -1269,11 +1292,12 @@ function WorkflowApp() {
 
   function resetWorkflow(nextId = createWorkflowId(), nextName = "未命名执行流") {
     setWorkflowId(nextId);
+    setSavedWorkflowId("");
     setWorkflowName(nextName);
     setNodes(cloneNodes(initialNodes).map((node) => ({ ...node, data: { ...node.data, nodeId: node.id } })));
     setEdges(cloneEdges(initialEdges));
     setSelectedNodeId("task");
-    setCompileOutput({ signins: "", tasks: "" });
+    setCompileOutput({ signins: "", tasks: "", github: "" });
     setCompileStatus("等待编译");
     setCompileIssues([]);
     setRunJob(null);
@@ -1281,6 +1305,7 @@ function WorkflowApp() {
 
   function duplicateWorkflow(flow: Workflow = currentWorkflow) {
     setWorkflowId(createWorkflowId());
+    setSavedWorkflowId("");
     setWorkflowName(`${flow.name || "执行流"} copy`);
     setNodes(cloneNodes(flow.nodes).map((node) => ({ ...node, data: { ...node.data, nodeId: node.id } })));
     setEdges(cloneEdges(flow.edges));
@@ -1394,8 +1419,9 @@ function WorkflowApp() {
   }
 
   async function saveWorkflow() {
-    const saved = await apiPost<{ workflow: Workflow }>("/api/workflows", currentWorkflow);
+    const saved = await apiPost<{ workflow: Workflow }>("/api/workflows", { ...currentWorkflow, previous_id: savedWorkflowId });
     setWorkflowId(saved.workflow.id);
+    setSavedWorkflowId(saved.workflow.id);
     setWorkflowName(saved.workflow.name);
     await loadWorkflows();
   }
@@ -1431,6 +1457,7 @@ function WorkflowApp() {
 
   function loadWorkflow(flow: Workflow) {
     setWorkflowId(flow.id);
+    setSavedWorkflowId(flow.id);
     setWorkflowName(flow.name);
     setNodes(cloneNodes(flow.nodes).map((node) => ({ ...node, data: { ...node.data, nodeId: node.id } })));
     setEdges(cloneEdges(flow.edges));
@@ -1816,6 +1843,12 @@ function WorkflowApp() {
                   <h2>tasks.yml</h2>
                 </div>
                 <pre className="code large">{compileOutput.tasks || "在编排流页面点击生成 YAML"}</pre>
+              </div>
+              <div className="panel">
+                <div className="panel-head">
+                  <h2>.github/workflows/tg-orchestrator.yml</h2>
+                </div>
+                <pre className="code large">{compileOutput.github || "预览或生成 YAML 后显示当前 GitHub Actions 入口"}</pre>
               </div>
             </section>
           </>
