@@ -21,7 +21,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from io import BytesIO
 from pathlib import Path
 from typing import Any
-from urllib.parse import parse_qs, urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 import qrcode
 import socks
@@ -36,6 +36,8 @@ LOG_DIR = ROOT / "logs"
 DEFAULT_ALT_OUT = ROOT / "sessions" / "tg_session_strings.txt"
 DEFAULT_MAIN_OUT = ROOT / "sessions" / "tg_main_session_string.txt"
 DEFAULT_WORKFLOWS = ROOT / "sessions" / "web_workflows.json"
+SIGNINS_CONFIG = CONFIG_DIR / "signins.yml"
+TASKS_CONFIG = CONFIG_DIR / "tasks.yml"
 GITHUB_WORKFLOW = ROOT.parent / ".github" / "workflows" / "tg-orchestrator.yml"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
@@ -675,6 +677,21 @@ def compile_flow_outputs(flow: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def apply_flow_configs(flow: dict[str, Any]) -> dict[str, Any]:
+    outputs = compile_flow_outputs(flow)
+    files = {
+        "signins": SIGNINS_CONFIG,
+        "tasks": TASKS_CONFIG,
+    }
+    for key, path in files.items():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(outputs[key], encoding="utf-8")
+    return {
+        "files": {key: str(path.relative_to(ROOT.parent)) for key, path in files.items()},
+        "github_workflow": str(GITHUB_WORKFLOW.relative_to(ROOT.parent)),
+    }
+
+
 def save_workflow(path: Path, flow: dict[str, Any], previous_id: str = "") -> dict[str, Any]:
     workflows = read_workflows(path)
     flow_id = str(flow.get("id") or uuid.uuid4().hex[:10])
@@ -687,6 +704,13 @@ def save_workflow(path: Path, flow: dict[str, Any], previous_id: str = "") -> di
     workflows.append(flow)
     write_workflows(path, workflows)
     return flow
+
+
+def delete_workflow(path: Path, flow_id: str) -> bool:
+    workflows = read_workflows(path)
+    next_workflows = [item for item in workflows if str(item.get("id")) != flow_id]
+    write_workflows(path, next_workflows)
+    return len(next_workflows) != len(workflows)
 
 
 def ordered_node_ids(flow: dict[str, Any]) -> list[str]:
@@ -955,6 +979,9 @@ class Handler(BaseHTTPRequestHandler):
         if parsed.path == "/api/workflows/compile":
             self.send_json(compile_flow_outputs(body))
             return
+        if parsed.path == "/api/workflows/apply":
+            self.send_json(apply_flow_configs(body))
+            return
         if parsed.path == "/api/run/start":
             flow = body.get("workflow") or body
             account_limit_raw = body.get("account_limit")
@@ -982,6 +1009,18 @@ class Handler(BaseHTTPRequestHandler):
                 self.send_json({"message": message})
             except Exception as exc:
                 self.send_json({"error": f"{type(exc).__name__}: {exc}"}, HTTPStatus.BAD_REQUEST)
+            return
+        self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
+
+    def do_DELETE(self) -> None:
+        parsed = urlparse(self.path)
+        if parsed.path.startswith("/api/workflows/"):
+            flow_id = unquote(parsed.path.removeprefix("/api/workflows/"))
+            if not flow_id:
+                self.send_json({"error": "missing workflow id"}, HTTPStatus.BAD_REQUEST)
+                return
+            deleted = delete_workflow(self.workflows, flow_id)
+            self.send_json({"deleted": deleted, "id": flow_id})
             return
         self.send_json({"error": "not found"}, HTTPStatus.NOT_FOUND)
 

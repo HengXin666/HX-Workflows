@@ -221,6 +221,30 @@ h3 {
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+.apply-panel {
+  grid-column: 1 / -1;
+}
+
+.apply-guide {
+  display: grid;
+  gap: 8px;
+  padding: 14px 16px 16px;
+  color: #b7c6d9;
+  line-height: 1.55;
+}
+
+.apply-guide p {
+  margin: 0;
+}
+
+.apply-guide code {
+  border: 1px solid #22344d;
+  border-radius: 6px;
+  padding: 2px 6px;
+  color: #dcecff;
+  background: #0a1321;
+}
+
 .actions {
   display: flex;
   flex-wrap: wrap;
@@ -1112,13 +1136,33 @@ textarea:focus {
 
 .workflow-item {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
   gap: 8px;
   align-items: center;
   border: 1px solid #1b2a40;
   border-radius: 8px;
   padding: 12px;
   background: #0d1624;
+}
+
+.workflow-picker-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
+button.danger {
+  border-color: #70323a;
+  color: #ffc3c9;
+  background: #2b1116;
+}
+
+button.danger:hover {
+  background: #3a171d;
+}
+
+button.compact {
+  padding-inline: 9px;
 }
 
 .run-flow-panel {

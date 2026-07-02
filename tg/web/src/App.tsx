@@ -58,6 +58,11 @@ type CompileOutput = {
   github?: string;
 };
 
+type ApplyOutput = {
+  files: Record<string, string>;
+  github_workflow: string;
+};
+
 type CompileIssue = {
   level: "error" | "warning";
   message: string;
@@ -315,6 +320,12 @@ async function apiPost<T>(path: string, body: unknown): Promise<T> {
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+  if (!response.ok) throw new Error(await response.text());
+  return response.json() as Promise<T>;
+}
+
+async function apiDelete<T>(path: string): Promise<T> {
+  const response = await fetch(`${API}${path}`, { method: "DELETE" });
   if (!response.ok) throw new Error(await response.text());
   return response.json() as Promise<T>;
 }
@@ -1061,6 +1072,7 @@ function WorkflowApp() {
   const [workflowName, setWorkflowName] = useState("每日签到");
   const [compileOutput, setCompileOutput] = useState<CompileOutput>({ signins: "", tasks: "", github: "" });
   const [compileStatus, setCompileStatus] = useState("等待编译");
+  const [applyStatus, setApplyStatus] = useState("未应用到仓库");
   const [compileIssues, setCompileIssues] = useState<CompileIssue[]>([]);
   const [runJob, setRunJob] = useState<RunJob | null>(null);
   const [accountLimit, setAccountLimit] = useState(() => Number(localStorage.getItem("tg.accountLimit") || "0"));
@@ -1426,6 +1438,14 @@ function WorkflowApp() {
     await loadWorkflows();
   }
 
+  async function deleteWorkflow(flow: Workflow) {
+    await apiDelete<{ deleted: boolean; id: string }>(`/api/workflows/${encodeURIComponent(flow.id)}`);
+    if (savedWorkflowId === flow.id) {
+      setSavedWorkflowId("");
+    }
+    await loadWorkflows();
+  }
+
   async function compileWorkflow() {
     if (hasCompileErrors) {
       setCompileIssues(localCompileIssues);
@@ -1436,7 +1456,22 @@ function WorkflowApp() {
     const output = await apiPost<CompileOutput>("/api/workflows/compile", currentWorkflow);
     setCompileOutput(output);
     setCompileStatus("已编译");
+    setApplyStatus("已生成预览，尚未写入仓库");
     setPage("run");
+  }
+
+  async function applyWorkflowConfigs() {
+    if (hasCompileErrors) {
+      setCompileIssues(localCompileIssues);
+      setApplyStatus("图中存在错误，不能应用");
+      setPage("flow");
+      return;
+    }
+    setApplyStatus("正在写入配置文件");
+    const output = await apiPost<CompileOutput>("/api/workflows/compile", currentWorkflow);
+    setCompileOutput(output);
+    const result = await apiPost<ApplyOutput>("/api/workflows/apply", currentWorkflow);
+    setApplyStatus(`已替换 ${Object.values(result.files).join("、")}；继续使用 ${result.github_workflow}`);
   }
 
   async function startRun(flow: Workflow = currentWorkflow) {
@@ -1581,6 +1616,7 @@ function WorkflowApp() {
                 <button onClick={() => resetWorkflow()}>新建执行流</button>
                 <button onClick={() => duplicateWorkflow()}>复制当前</button>
                 <button onClick={saveWorkflow}>保存工作流</button>
+                <button onClick={() => savedWorkflowId && deleteWorkflow({ ...currentWorkflow, id: savedWorkflowId })} disabled={!savedWorkflowId}>删除当前</button>
                 <button className="primary" onClick={compileWorkflow} disabled={hasCompileErrors}>生成 YAML</button>
               </div>
             </header>
@@ -1598,7 +1634,10 @@ function WorkflowApp() {
                   <span>复用执行流</span>
                   {workflows.length === 0 ? <em>暂无保存项</em> : null}
                   {workflows.map((flow) => (
-                    <button key={flow.id} onClick={() => loadWorkflow(flow)} title={flow.id}>{flow.name || flow.id}</button>
+                    <div className="workflow-picker-row" key={flow.id}>
+                      <button onClick={() => loadWorkflow(flow)} title={flow.id}>{flow.name || flow.id}</button>
+                      <button className="danger compact" onClick={() => deleteWorkflow(flow)} title="删除工作流">删除</button>
+                    </div>
                   ))}
                 </div>
               </div>
@@ -1792,6 +1831,7 @@ function WorkflowApp() {
                       </div>
                       <button onClick={() => loadWorkflow(flow)}>编辑</button>
                       <button onClick={() => startRun(flow)}>执行</button>
+                      <button className="danger" onClick={() => deleteWorkflow(flow)}>删除</button>
                     </article>
                   ))}
                 </div>
@@ -1831,16 +1871,29 @@ function WorkflowApp() {
               </div>
             </section>
             <section className="grid two">
+              <div className="panel apply-panel">
+                <div className="panel-head">
+                  <h2>应用到 GitHub Actions</h2>
+                  <div className="actions">
+                    <button onClick={compileWorkflow}>重新生成预览</button>
+                    <button className="primary" onClick={applyWorkflowConfigs} disabled={hasCompileErrors}>应用到仓库</button>
+                  </div>
+                </div>
+                <div className="apply-guide">
+                  <p>当前仓库已经有 <code>.github/workflows/tg-orchestrator.yml</code>，不要再新建 <code>.github/workflows/tg.yml</code>，否则同一 cron 会重复执行。</p>
+                  <p>点击应用会替换 <code>tg/config/signins.yml</code> 和 <code>tg/config/tasks.yml</code>；现有 orchestrator 会在定时或手动触发时读取这两个文件。</p>
+                  <span className="save-hint">{applyStatus}</span>
+                </div>
+              </div>
               <div className="panel">
                 <div className="panel-head">
-                  <h2>signins.yml</h2>
-                  <button onClick={compileWorkflow}>重新生成</button>
+                  <h2>tg/config/signins.yml</h2>
                 </div>
                 <pre className="code large">{compileOutput.signins || "在编排流页面点击生成 YAML"}</pre>
               </div>
               <div className="panel">
                 <div className="panel-head">
-                  <h2>tasks.yml</h2>
+                  <h2>tg/config/tasks.yml</h2>
                 </div>
                 <pre className="code large">{compileOutput.tasks || "在编排流页面点击生成 YAML"}</pre>
               </div>

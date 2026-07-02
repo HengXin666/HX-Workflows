@@ -1,175 +1,64 @@
-# TG 签到明文配置。
-#
-# 这个文件可以提交到 GitHub，适合放“可变但不敏感”的配置：
-# - 跟哪个 bot / 群 / 频道对话
-# - 发送什么签到消息
-# - 点击哪个按钮
-# - 哪些返回消息需要转发/通知
-#
-# 不要把 session、api_hash、bot token 写在这里；这些放 GitHub Secrets。
-
 defaults:
-  # Telegram 客户端参数从 GitHub Secrets 读取。
   api_id_secret: TG_API_ID
   api_hash_secret: TG_API_HASH
-
-  # 默认账号池：一行一个 Telegram session string。
   accounts_secret: TG_SESSION_STRINGS
-
-  # 可选代理 Secret。没有代理可以不配置这个 Secret。
   proxy_secret: TG_PROXY
-
-  # 默认转发/通知配置。
   forward:
     enabled: true
-
-    # notify：用 Bot API 发一条摘要通知，不是真正 forward 原消息。
-    # user_forward：用当前登录的用户账号把匹配消息真正转发到 to_peer。
     mode: notify
-
-    # 什么时候转发/通知：
-    # always      无论如何都转发
-    # success     脚本执行成功时转发
-    # failure     脚本执行失败时转发
-    # matched     返回消息命中过滤条件时转发
-    # not_matched 返回消息没有命中过滤条件时转发
     when:
-      - failure
-      - matched
-
-    # notify 模式使用。Bot token 和默认 chat id 仍然走 Secrets。
+    - failure
+    - matched
     bot_token_secret: TG_FORWARD_BOT_TOKEN
     chat_id_secret: TG_FORWARD_CHAT_ID
-
-    # user_forward 模式使用。示例："@your_log_channel" 或 "-1001234567890"。
-    to_peer: null
-
-    # 不是所有消息都转发：只有命中 include 且不命中 exclude 的消息才算 matched。
     include:
       contains:
-        - "签到成功"
-        - "已签到"
-        - "积分"
-        - "经验"
+      - 签到成功|积分
       regex: []
     exclude:
       contains:
-        - "广告"
+      - 广告
       regex: []
-
-    # 最多读取最近多少条返回消息用于判断/转发。
-    max_messages: 3
-
+    max_messages: 5
 jobs:
-  # freexzteam 每日签到：给 bot 发送菜单文案。
-  - id: freexzteam-daily-sign
+- id: daily-sign
+  node_id: task
+  enabled: true
+  peer: '@example_bot'
+  accounts_secret: TG_SESSION_STRINGS
+  actions:
+  - type: open
+    node_id: open-a
+    peer: '@example_bot'
+    regex: false
+  - type: send
+    node_id: send-a
+    text: 签到
+  - type: parse
+    node_id: parse-a
+    pattern: 签到成功|积分
+    regex: true
+    save_as: last_parse
+    extract: messages
+    after_send: true
+    wait_seconds: 3.0
+  - type: forward
+    node_id: forward-a
+    to_peer: me
+    source: last_parse
+  collect:
+    last_messages: 5
+  forward:
     enabled: true
-    peer: "@freexzteam_bot"
-    accounts_secret: TG_SESSION_STRINGS
-    actions:
-      - type: send
-        text: "📅 每日签到"
-      - type: wait
-        seconds: 5
-    collect:
-      last_messages: 3
-    forward:
-      enabled: false
-      include:
-        contains:
-          - "签到成功"
-          - "今日已签到"
-          - "积分"
-        regex: []
-      exclude:
-        contains: []
-        regex: []
-
-  # 示例 1：给 bot 发送“签到”。默认关闭，确认参数后再改 enabled: true。
-  - id: demo-send-sign
-    enabled: false
-    peer: "@example_bot"
-    accounts_secret: TG_SESSION_STRINGS
-    actions:
-      - type: send
-        text: "签到"
-      - type: wait
-        seconds: 5
-    collect:
-      last_messages: 3
-    forward:
-      enabled: true
-      when:
-        - failure
-        - matched
-      include:
-        contains:
-          - "签到成功"
-          - "今日已签到"
-          - "积分"
-        regex: []
-      exclude:
-        contains:
-          - "广告"
-        regex: []
-
-  # 示例 2：发送 /start 后点击“签到”按钮。
-  - id: demo-click-button
-    enabled: false
-    peer: "@example_bot"
-    accounts_secret: TG_SESSION_STRINGS
-    actions:
-      - type: send
-        text: "/start"
-      - type: wait
-        seconds: 3
-      - type: click
-        text: "签到"
-        search_limit: 5
-      - type: wait
-        seconds: 5
-    collect:
-      last_messages: 5
-    forward:
-      enabled: true
-      when:
-        - failure
-        - matched
-      include:
-        contains:
-          - "签到成功"
-          - "已签到"
-          - "领取成功"
-        regex: []
-      exclude:
-        contains: []
-        regex: []
-
-  # 示例 3：真正转发命中的原消息到另一个聊天。
-  # 要求当前用户账号有权限访问目标聊天，并且能向 to_peer 发送/转发。
-  - id: demo-user-forward
-    enabled: false
-    peer: "@example_bot"
-    accounts_secret: TG_SESSION_STRINGS
-    actions:
-      - type: send
-        text: "签到"
-      - type: wait
-        seconds: 5
-    collect:
-      last_messages: 3
-    forward:
-      enabled: true
-      mode: user_forward
-      to_peer: "@your_log_channel"
-      when:
-        - matched
-        - failure
-      include:
-        contains:
-          - "签到成功"
-          - "积分"
-        regex: []
-      exclude:
-        contains: []
-        regex: []
+    mode: user_forward
+    to_peer: me
+    when:
+    - matched
+    - failure
+    include:
+      contains:
+      - 签到成功|积分
+      regex: []
+    exclude:
+      contains: []
+      regex: []
