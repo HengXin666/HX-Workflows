@@ -7,12 +7,12 @@
 文档入口：
 
 ```text
-LOCAL_TG_SIGNER.md # 本地用 tg-signer 登录、测试一个账号、多账号
-LOCAL_QR_LOGIN.md  # 扫码登录，生成 TG_SESSION_STRINGS
-TG_SIGNER.md       # 推荐：tg-signer 登录、凭证保存、多账号、运行方式
-CONFIGURE.md       # 自定义 YAML 签到配置、转发过滤、多账号任务
-TELEGRAM_KEYS.md   # Telegram 参数说明、BotFather token 和 API ID 区别
-signins.yml        # 自定义脚本使用的明文签到配置
+docs/LOCAL_TG_SIGNER.md # 本地用 tg-signer 登录、测试一个账号、多账号
+docs/LOCAL_QR_LOGIN.md  # 扫码登录，生成 TG_SESSION_STRINGS
+docs/TG_SIGNER.md       # 推荐：tg-signer 登录、凭证保存、多账号、运行方式
+docs/CONFIGURE.md       # 自定义 YAML 签到配置、转发过滤、多账号任务
+docs/TELEGRAM_KEYS.md   # Telegram 参数说明、BotFather token 和 API ID 区别
+config/signins.yml      # 自定义脚本使用的明文签到配置
 ```
 
 ## 设计思路
@@ -20,15 +20,15 @@ signins.yml        # 自定义脚本使用的明文签到配置
 配置分成两层：
 
 ```text
-tg/tasks.yml    # 启用哪些任务、运行哪个 job
-tg/signins.yml  # 自定义脚本使用：和谁对话、发什么、点什么、转发什么
+tg/config/tasks.yml    # 启用哪些任务、运行哪个 job
+tg/config/signins.yml  # 自定义脚本使用：和谁对话、发什么、点什么、转发什么
 ```
 
 GitHub Actions 已经写死为：**每 24 小时运行一次，北京时间 00:15**。
 
-定时触发时，workflow 会直接运行 `tg/tasks.yml` 里所有 `enabled: true` 的任务。
+定时触发时，workflow 会直接运行 `tg/config/tasks.yml` 里所有 `enabled: true` 的任务。
 
-如果走 `tg-signer`，签到动作由 `tg-signer` 自己的 `.signer` 配置控制；如果走自定义脚本，签到动作由 `tg/signins.yml` 控制。
+如果走 `tg-signer`，签到动作由 `tg-signer` 自己的 `.signer` 配置控制；如果走自定义脚本，签到动作由 `tg/config/signins.yml` 控制。
 
 ## 文件说明
 
@@ -37,14 +37,14 @@ GitHub Actions 已经写死为：**每 24 小时运行一次，北京时间 00:1
 tg/pyproject.toml                      # uv 项目配置，已安装 tg-signer[yaml]
 tg/.python-version                     # Python 版本
 tg/runner.py                           # 通用任务编排器
-tg/tasks.yml                           # 当前启用的任务配置
-tg/TG_SIGNER.md                        # tg-signer 使用说明
-tg/signins.yml                         # 自定义脚本使用的 TG 签到明文配置
-tg/tasks.example.yml                   # 更多任务配置示例
-tg/CONFIGURE.md                        # 自定义脚本签到和转发配置教程
-tg/TELEGRAM_KEYS.md                    # TG 参数获取和区别说明
+tg/config/tasks.yml                    # 当前启用的任务配置
+tg/docs/TG_SIGNER.md                   # tg-signer 使用说明
+tg/config/signins.yml                  # 自定义脚本使用的 TG 签到明文配置
+tg/config/tasks.example.yml            # 更多任务配置示例
+tg/docs/CONFIGURE.md                   # 自定义脚本签到和转发配置教程
+tg/docs/TELEGRAM_KEYS.md               # TG 参数获取和区别说明
 tg/scripts/example_task.py             # 示例/冒烟测试任务
-tg/scripts/sign_from_config.py         # 自定义脚本：从 signins.yml 执行签到
+tg/scripts/sign_from_config.py         # 自定义脚本：从 config/signins.yml 执行签到
 tg/scripts/gen_session.py              # 自定义脚本：本地生成 session string
 ```
 
@@ -79,7 +79,7 @@ uv run python runner.py run-all
 
 ## 推荐使用流程：tg-signer
 
-如果你没有 `api_id/api_hash`，先看：[`LOCAL_TG_SIGNER.md`](./LOCAL_TG_SIGNER.md)。
+如果你没有 `api_id/api_hash`，先看：[`LOCAL_TG_SIGNER.md`](./docs/LOCAL_TG_SIGNER.md)。
 
 1. 本地登录：
 
@@ -103,7 +103,7 @@ uv run tg-signer run-once my_sign
 
 4. 把可提交的 `.signer` 配置提交到仓库，把 session 凭证放到 GitHub Secrets。
 
-详细说明看：[`TG_SIGNER.md`](./TG_SIGNER.md)。
+详细说明看：[`TG_SIGNER.md`](./docs/TG_SIGNER.md)。
 
 ## 手动运行
 

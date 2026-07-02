@@ -22,7 +22,9 @@ from zoneinfo import ZoneInfo
 import yaml
 
 ROOT = Path(__file__).resolve().parent
-DEFAULT_CONFIG = ROOT / "tasks.yml"
+CONFIG_DIR = ROOT / "config"
+DEFAULT_CONFIG = CONFIG_DIR / "tasks.yml"
+LEGACY_DEFAULT_CONFIG = ROOT / "tasks.yml"
 
 
 @dataclass(frozen=True)
@@ -225,7 +227,10 @@ def main(argv: list[str] | None = None) -> int:
     run.add_argument("task_ids", nargs="+")
 
     args = parser.parse_args(argv)
-    config_path = Path(args.config).resolve()
+    config_path = Path(args.config)
+    if config_path == DEFAULT_CONFIG and not config_path.exists() and LEGACY_DEFAULT_CONFIG.exists():
+        config_path = LEGACY_DEFAULT_CONFIG
+    config_path = config_path.resolve()
     config = load_config(config_path)
     timezone = str(config.get("timezone", "Asia/Tokyo"))
     tasks = parse_tasks(config)

@@ -35,8 +35,10 @@ except Exception:  # pragma: no cover - only needed when proxy is used
 
 ROOT = Path(__file__).resolve().parents[1]
 WORKFLOWS_ROOT = ROOT.parent
-DEFAULT_CONFIG = ROOT / "signins.yml"
-DEFAULT_REPORT = ROOT / "reports" / "tg_signins.json"
+CONFIG_DIR = ROOT / "config"
+DEFAULT_CONFIG = CONFIG_DIR / "signins.yml"
+LEGACY_DEFAULT_CONFIG = ROOT / "signins.yml"
+DEFAULT_REPORT = ROOT / "logs" / "reports" / "tg_signins.json"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 TG_LINK_RE = re.compile(r"(?:https?://)?t\.me/[^\s)>\]]+|tg://join\?invite=[A-Za-z0-9_-]+|https?://telegram\.me/[^\s)>\]]+", re.I)
@@ -375,9 +377,9 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                     raise RuntimeError(f"不支持的 join 目标类型: {entity.__class__.__name__}")
 
         elif action_type == "send":
-            text = str(action.get("text", ""))
+            text = str(action.get("text") if action.get("text") is not None else action.get("cmd", ""))
             if not text:
-                raise RuntimeError("send action 缺少 text")
+                raise RuntimeError("send action 缺少 text/cmd")
             print(f"发送消息到 {current_peer}: {text}", flush=True)
             sent = await client.send_message(current_peer, text)
             context["last_send_peer"] = current_peer
@@ -385,9 +387,9 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             print(f"已发送消息 id={context['last_send_id']}", flush=True)
 
         elif action_type == "click":
-            text = str(action.get("text", ""))
+            text = str(action.get("text") if action.get("text") is not None else action.get("cmd", ""))
             if not text:
-                raise RuntimeError("click action 缺少 text")
+                raise RuntimeError("click action 缺少 text/cmd")
             search_limit = int(action.get("search_limit", 5))
             print(f"查找并点击按钮: {text}", flush=True)
             messages = await client.get_messages(current_peer, limit=search_limit)
@@ -727,7 +729,10 @@ def main() -> int:
     run_enabled_parser.add_argument("--report", default=str(DEFAULT_REPORT), help="输出 JSON 报告路径")
 
     args = parser.parse_args()
-    config = load_yaml(Path(args.config).resolve())
+    config_path = Path(args.config)
+    if config_path == DEFAULT_CONFIG and not config_path.exists() and LEGACY_DEFAULT_CONFIG.exists():
+        config_path = LEGACY_DEFAULT_CONFIG
+    config = load_yaml(config_path.resolve())
     if args.cmd == "list":
         return asyncio.run(list_jobs(config))
     if args.cmd == "run":

@@ -127,7 +127,7 @@ TG_SESSION_FILE_BASE64
 workflow 运行时再还原：
 
 ```bash
-printf '%s' "$TG_SESSION_FILE_BASE64" | base64 -d > tg/account_a.session
+printf '%s' "$TG_SESSION_FILE_BASE64" | base64 -d > tg/sessions/account_a.session
 ```
 
 这种方式可行，但不如 `TG_SESSION_STRING` 方便多账号管理。
@@ -208,7 +208,7 @@ uv run tg-signer -a account_a -w .signer run-once my_sign
 
 ```text
 tg/pyproject.toml
-tg/tasks.yml
+tg/config/tasks.yml
 tg/TG_SIGNER.md
 tg/.signer/ 里的非敏感配置文件
 ```

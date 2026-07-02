@@ -15,7 +15,7 @@ uv run tg-signer -a account_1 login
 `tg-signer` 会提示手机号、验证码、二步验证密码。登录成功后会生成：
 
 ```text
-account_1.session
+sessions/account_1.session
 .signer/account_1.session_string
 ```
 

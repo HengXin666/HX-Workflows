@@ -46,13 +46,13 @@ uv run python scripts/qr_login.py --count 1 --api-id 123456 --api-hash "xxxx"
 
 ## 2. 本地运行签到
 
-先在 `signins.yml` 中配置真实任务，例如把 `peer` 改成目标 bot，设置 `actions`，并把对应 job 的 `enabled` 改成 `true`。
+先在 `config/signins.yml` 中配置真实任务，例如把 `peer` 改成目标 bot，设置 `actions`，并把对应 job 的 `enabled` 改成 `true`。
 
 本地执行：
 
 ```bash
 TG_SESSION_STRINGS="$(cat sessions/tg_session_strings.txt)" \
-uv run python scripts/sign_from_config.py run demo-send-sign
+uv run python scripts/sign_from_config.py --config config/signins.yml run demo-send-sign
 ```
 
 如果只想检查配置列表：
@@ -72,14 +72,14 @@ TG_SESSION_STRINGS
 
 `TG_API_ID` / `TG_API_HASH` 可以不配置；脚本会默认使用和 `tg-signer` 相同的内置参数。
 
-然后在 `tasks.yml` 里启用对应任务：
+然后在 `config/tasks.yml` 里启用对应任务：
 
 ```yaml
 - id: tg-sign-my-sign
   enabled: true
   schedule:
     - daily:00:15
-  command: uv run python scripts/sign_from_config.py run my-sign
+  command: uv run python scripts/sign_from_config.py --config config/signins.yml run my-sign
   timeout_minutes: 20
 ```
 

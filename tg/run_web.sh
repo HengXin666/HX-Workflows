@@ -3,12 +3,13 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 WEB_DIR="$ROOT/web"
+LOG_DIR="${TG_LOG_DIR:-$ROOT/logs}"
 API_HOST="${TG_WEB_API_HOST:-127.0.0.1}"
 API_PORT="${TG_WEB_API_PORT:-8765}"
 WEB_HOST="${TG_WEB_HOST:-127.0.0.1}"
 WEB_PORT="${TG_WEB_PORT:-5173}"
 TG_PROXY="${TG_PROXY:-http://127.0.0.1:2334}"
-PID_FILE="${TG_WEB_PID_FILE:-$ROOT/.web.pid}"
+PID_FILE="${TG_WEB_PID_FILE:-$LOG_DIR/web.pid}"
 API_PID=""
 WEB_PID=""
 
@@ -73,6 +74,7 @@ need_cmd() {
 need_cmd uv
 need_cmd npm
 
+mkdir -p "$LOG_DIR"
 stop_previous
 
 cd "$ROOT"

@@ -1,4 +1,4 @@
-# Copy ideas from here into tasks.yml.
+# Copy ideas from here into config/tasks.yml.
 timezone: Asia/Tokyo
 
 tasks:

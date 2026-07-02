@@ -11,7 +11,7 @@
 - 主账号用于群聊或频道发邀请链接、任务入口等内容。
 - 小号池用于打开 bot 邀请入口、发送签到文本、点击按钮、等待回执。
 - 使用 React Flow 编排所有小号都会执行的任务图。
-- 可视化生成 `signins.yml`、`tasks.yml` 和主账号本地命令。
+- 可视化生成 `config/signins.yml`、`config/tasks.yml` 和主账号本地命令。
 - 通过本地 API 扫码导入账号，凭证写入 `tg/sessions/`，该目录已被 git 忽略。
 
 ## 启动
@@ -110,12 +110,12 @@ tasks.yml
 主账号命令
 ```
 
-复制对应内容到 `tg/signins.yml` 和 `tg/tasks.yml` 后即可用现有 runner 执行。
+复制对应内容到 `tg/config/signins.yml` 和 `tg/config/tasks.yml` 后即可用现有 runner 执行。
 
 本地运行小号签到时，页面会生成下面这种命令：
 
 ```bash
-TG_SESSION_STRINGS="$(cat sessions/tg_session_strings.txt)" uv run python scripts/sign_from_config.py run-enabled --mail
+TG_SESSION_STRINGS="$(cat sessions/tg_session_strings.txt)" uv run python scripts/sign_from_config.py --config config/signins.yml run-enabled --mail
 ```
 
 敏感凭证不要提交到仓库。

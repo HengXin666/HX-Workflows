@@ -23,7 +23,7 @@ TG_PROXY
 GitHub 仓库 -> Settings -> Secrets and variables -> Actions -> New repository secret
 ```
 
-### 明文配置：放 `tg/signins.yml`
+### 明文配置：放 `tg/config/signins.yml`
 
 这些可以提交到仓库，方便编辑：
 
@@ -33,7 +33,7 @@ actions              # 发什么消息、点什么按钮
 forward.when         # 什么情况下转发/通知
 forward.include      # 命中哪些文本才转发
 forward.exclude      # 排除哪些文本
-schedule             # 写在 tg/tasks.yml 里
+schedule             # 写在 tg/config/tasks.yml 里
 ```
 
 ---
@@ -95,7 +95,7 @@ TG_API_HASH=<你的 api_hash>
 注意：
 
 - `api_hash` 和密码一样敏感，不要发给别人。
-- 不要把 `api_id/api_hash` 写进 `signins.yml`。
+- 不要把 `api_id/api_hash` 写进 `config/signins.yml`。
 - 不要用 API 做刷量、骚扰、垃圾消息或绕过风控。
 
 ---
@@ -283,7 +283,7 @@ https://api.telegram.org/bot<你的 bot token>/getUpdates
 
 ## 8. 获取 `peer`：和谁对话进行签到
 
-`peer` 写在 `tg/signins.yml` 中，例如：
+`peer` 写在 `tg/config/signins.yml` 中，例如：
 
 ```yaml
 peer: "@example_bot"

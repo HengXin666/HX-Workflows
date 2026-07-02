@@ -2,12 +2,9 @@
 __pycache__/
 *.py[cod]
 logs/
-reports/
 .env
 .env.*
 !.env.example
-.web.pid
-.web.log
 .signer/
 sessions/
 *.session

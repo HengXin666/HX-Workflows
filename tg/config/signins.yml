@@ -68,7 +68,7 @@ jobs:
     accounts_secret: TG_SESSION_STRINGS
     actions:
       - type: send
-        text: "每日签到"
+        text: "📅 每日签到"
       - type: wait
         seconds: 5
     collect:

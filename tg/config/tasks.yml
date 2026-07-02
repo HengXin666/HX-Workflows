@@ -4,7 +4,7 @@
 # 定时触发时会直接运行所有 enabled: true 的任务。
 #
 # 这里主要负责“哪些任务启用、运行哪个脚本”。
-# 具体 TG 签到对象、发送内容、点击按钮、转发过滤规则，请写到 tg/signins.yml。
+# 具体 TG 签到对象、发送内容、点击按钮、转发过滤规则，请写到 tg/config/signins.yml。
 # 敏感内容仍然放 GitHub Secrets，不要写进仓库。
 
 timezone: Asia/Shanghai
@@ -19,24 +19,24 @@ tasks:
     command: uv run python scripts/example_task.py
     timeout_minutes: 10
 
-  # 查看 signins.yml 里有哪些签到配置。
+  # 查看 config/signins.yml 里有哪些签到配置。
   - id: tg-sign-list
     enabled: false
     schedule:
       - daily:00:15
-    command: uv run python scripts/sign_from_config.py list
+    command: uv run python scripts/sign_from_config.py --config config/signins.yml list
     timeout_minutes: 10
 
-  # 示例：执行 tg/signins.yml 里的 demo-send-sign。
+  # 示例：执行 tg/config/signins.yml 里的 demo-send-sign。
   # 使用前需要：
-  # 1. 在 tg/signins.yml 中把 jobs.demo-send-sign.enabled 改成 true
+  # 1. 在 tg/config/signins.yml 中把 jobs.demo-send-sign.enabled 改成 true
   # 2. 把这里的 enabled 改成 true
   # 3. 配置 GitHub Secrets: TG_API_ID / TG_API_HASH / TG_SESSION_STRINGS
   - id: tg-sign-demo-send
     enabled: false
     schedule:
       - daily:00:15
-    command: uv run python scripts/sign_from_config.py run demo-send-sign
+    command: uv run python scripts/sign_from_config.py --config config/signins.yml run demo-send-sign
     timeout_minutes: 20
 
   # 示例：执行“发送 /start 后点击按钮”的签到流程。
@@ -44,7 +44,7 @@ tasks:
     enabled: false
     schedule:
       - daily:00:15
-    command: uv run python scripts/sign_from_config.py run demo-click-button
+    command: uv run python scripts/sign_from_config.py --config config/signins.yml run demo-click-button
     timeout_minutes: 20
 
   # 示例：执行真正转发匹配原消息的流程。
@@ -52,7 +52,7 @@ tasks:
     enabled: false
     schedule:
       - daily:00:15
-    command: uv run python scripts/sign_from_config.py run demo-user-forward
+    command: uv run python scripts/sign_from_config.py --config config/signins.yml run demo-user-forward
     timeout_minutes: 20
 
   # freexzteam 每日签到。
@@ -60,5 +60,5 @@ tasks:
     enabled: true
     schedule:
       - daily:00:15
-    command: uv run python scripts/sign_from_config.py run-enabled --mail
+    command: uv run python scripts/sign_from_config.py --config config/signins.yml run-enabled --mail
     timeout_minutes: 30

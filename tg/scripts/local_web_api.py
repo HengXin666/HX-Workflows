@@ -31,6 +31,8 @@ from telethon.sessions import StringSession
 from telethon.tl.functions.users import GetFullUserRequest
 
 ROOT = Path(__file__).resolve().parents[1]
+CONFIG_DIR = ROOT / "config"
+LOG_DIR = ROOT / "logs"
 DEFAULT_ALT_OUT = ROOT / "sessions" / "tg_session_strings.txt"
 DEFAULT_MAIN_OUT = ROOT / "sessions" / "tg_main_session_string.txt"
 DEFAULT_WORKFLOWS = ROOT / "sessions" / "web_workflows.json"
@@ -543,7 +545,10 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                 peer = str(data.get("peer") or peer)
                 actions.append({"type": "open", "node_id": current, "peer": peer, "regex": bool(data.get("regex"))})
             elif node_type == "send":
-                text = str(data.get("command") or "") if str(data.get("sendMode") or "") == "command" else str(data.get("text") or "")
+                if str(data.get("sendMode") or "") == "command":
+                    text = str(data.get("command") if data.get("command") is not None else data.get("cmd", ""))
+                else:
+                    text = str(data.get("text") if data.get("text") is not None else data.get("cmd", ""))
                 actions.append({"type": "send", "node_id": current, "text": text})
             elif node_type == "parse":
                 collect_limit = int(data.get("limit") or collect_limit)
@@ -640,7 +645,7 @@ def flow_to_tasks(flow: dict[str, Any]) -> dict[str, Any]:
                 "id": f"tg-sign-{job_id}",
                 "enabled": True,
                 "schedule": ["daily:00:15"],
-                "command": "uv run python scripts/sign_from_config.py run-enabled --mail",
+                "command": "uv run python scripts/sign_from_config.py --config config/signins.yml run-enabled --mail",
                 "timeout_minutes": 30,
             }
         ],
