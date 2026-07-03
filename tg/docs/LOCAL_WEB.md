@@ -107,10 +107,25 @@ uv run python scripts/enroll_accounts.py
 ```text
 signins.yml
 tasks.yml
+GitHub Actions workflow
 主账号命令
 ```
 
 复制对应内容到 `tg/config/signins.yml` 和 `tg/config/tasks.yml` 后即可用现有 runner 执行。
+
+如果要应用到 GitHub Actions：
+
+1. 把 `signins.yml` 内容写入 `components/HX-Workflows/tg/config/signins.yml`。
+2. 把 `tasks.yml` 内容写入 `components/HX-Workflows/tg/config/tasks.yml`。
+3. 把 `.github/workflows/tg.yml` 内容写入仓库根目录的 `.github/workflows/tg.yml`。
+4. 在仓库 Secrets 配置 `TG_SESSION_STRINGS`，以及需要的 `TG_PROXY`、SMTP 邮件变量。
+
+资源池去重 DB 不提交 Git。生成的 GitHub Actions 示例已经包含 `actions/cache`，会缓存：
+
+```text
+components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3
+components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3-*
+```
 
 本地运行小号签到时，页面会生成下面这种命令：
 

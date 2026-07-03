@@ -115,6 +115,7 @@ const nodeCatalog = [
   { type: "parse", title: "解析/提取", desc: "提取消息和按钮链接", icon: "filter" },
   { type: "join", title: "添加账号/群组", desc: "加入链接或变量目标", icon: "plus" },
   { type: "forward", title: "转发消息", desc: "转发解析结果", icon: "forward" },
+  { type: "resource_pool", title: "资源池转存", desc: "只转发图片/视频并去重", icon: "archive" },
   { type: "link", title: "打开链接", desc: "保存或打开外部链接", icon: "link" },
 ];
 
@@ -124,6 +125,7 @@ const labels: Record<string, string> = {
   send: "发送消息",
   parse: "解析/提取",
   forward: "转发消息",
+  resource_pool: "资源池转存",
   join: "添加账号/群组",
   link: "打开链接",
 };
@@ -132,10 +134,11 @@ const nextNodeKinds: Record<string, string[]> = {
   task: ["task", "open", "join", "link"],
   open: ["send", "parse", "forward", "join", "link", "task"],
   send: ["parse", "forward", "open", "join", "link", "task"],
-  parse: ["forward", "join", "open", "send", "link", "task"],
+  parse: ["forward", "resource_pool", "join", "open", "send", "link", "task"],
   join: ["open", "send", "parse", "link", "task"],
   link: ["join", "open", "send", "parse", "task"],
   forward: ["task"],
+  resource_pool: ["task"],
 };
 
 const API = import.meta.env.VITE_TG_WEB_API || "http://127.0.0.1:8765";
@@ -231,6 +234,12 @@ function createNode(type: string, position: { x: number; y: number }): Node {
       saveAs: type === "parse" ? "last_parse" : "last_links",
       regex: type === "parse",
       toPeer: "me",
+      poolPeer: "@your_pool_group",
+      includePhotos: true,
+      includeVideos: true,
+      dedupe: true,
+      dedupeStore: "sessions/resource_pool_seen.sqlite3",
+      joinPool: true,
       sourceMode: "manual",
       source: "last_links",
       target: "",
@@ -288,6 +297,9 @@ function validateWorkflow(flow: Workflow): CompileIssue[] {
     if (kind === "send" && String(data.sendMode) === "command" && !String(data.command || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "发送消息节点缺少命令/按钮" });
     if (kind === "parse" && !String(data.saveAs || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "解析节点缺少保存变量" });
     if (kind === "forward" && !String(data.toPeer || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "转发节点缺少目标会话" });
+    if (kind === "resource_pool" && !String(data.poolPeer || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "资源池节点缺少群聊" });
+    if (kind === "resource_pool" && !Boolean(data.includePhotos) && !Boolean(data.includeVideos)) issues.push({ level: "error", nodeId: node.id, message: "资源池节点至少选择图片或视频" });
+    if (kind === "resource_pool" && Boolean(data.dedupe) && !String(data.dedupeStore || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "资源池节点缺少去重 DB 路径" });
     if (kind === "join" && String(data.sourceMode || "manual") === "variable" && !String(data.source || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "添加节点缺少来源变量" });
     if (kind === "join" && String(data.sourceMode || "manual") !== "variable" && !String(data.target || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "添加节点缺少链接或用户名" });
     if (kind === "link" && !String(data.url || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "打开链接节点缺少链接" });
@@ -398,6 +410,8 @@ function FlowNode({ data, selected }: NodeProps) {
               : extractMode === "messages" ? String(nodeData.pattern || "") : String(nodeData.saveAs || "last_links")
             : kind === "forward"
               ? String(nodeData.toPeer || "")
+              : kind === "resource_pool"
+                ? String(nodeData.poolPeer || "")
               : kind === "join"
                 ? String(nodeData.sourceMode) === "variable" ? String(nodeData.source || "") : String(nodeData.target || "")
               : String(nodeData.url || "");
@@ -482,6 +496,7 @@ function FlowNode({ data, selected }: NodeProps) {
           </>
         ) : null}
         {kind === "forward" ? <NodeTextInput value={String(nodeData.toPeer || "")} onCommit={(value) => emitText("toPeer", value)} /> : null}
+        {kind === "resource_pool" ? <NodeTextInput value={String(nodeData.poolPeer || "")} onCommit={(value) => emitText("poolPeer", value)} /> : null}
         {kind === "join" ? <NodeTextInput value={String(nodeData.sourceMode) === "variable" ? String(nodeData.source || "") : String(nodeData.target || "")} onCommit={(value) => emitText(String(nodeData.sourceMode) === "variable" ? "source" : "target", value)} /> : null}
         {kind === "link" ? <NodeTextInput value={String(nodeData.url || "")} onCommit={(value) => emitText("url", value)} /> : null}
       </div> : null}
@@ -498,6 +513,7 @@ function NodeIcon({ icon }: { icon: string }) {
   if (icon === "filter") return <svg viewBox="0 0 24 24"><path d="M4 5h16l-6.2 7.1V19l-3.6-1.8v-5.1L4 5Z" /></svg>;
   if (icon === "plus") return <svg viewBox="0 0 24 24"><path d="M11 4h2v7h7v2h-7v7h-2v-7H4v-2h7V4Z" /></svg>;
   if (icon === "forward") return <svg viewBox="0 0 24 24"><path d="M13 5v5.2C7.6 10.8 4.4 13.7 3 19c2.6-3.2 5.7-4.4 10-4v5l8-7.5L13 5Z" /></svg>;
+  if (icon === "archive") return <svg viewBox="0 0 24 24"><path d="M4 4h16l1 5H3l1-5Zm1 7h14v9H5v-9Zm4 2v2h6v-2H9Z" /></svg>;
   if (icon === "link") return <svg viewBox="0 0 24 24"><path d="M9.3 14.7a1 1 0 0 1 0-1.4l4-4a1 1 0 1 1 1.4 1.4l-4 4a1 1 0 0 1-1.4 0Zm-3.6 3.6a4 4 0 0 1 0-5.7l2.2-2.2 1.4 1.4-2.2 2.2a2 2 0 1 0 2.8 2.8l2.2-2.2 1.4 1.4-2.2 2.2a4 4 0 0 1-5.6.1Zm8.9-8.9-1.4-1.4 2.2-2.2a2 2 0 1 1 2.8 2.8L16 10.8l1.4 1.4 2.2-2.2a4 4 0 0 0-5.7-5.7l-2.2 2.2Z" /></svg>;
   return <svg viewBox="0 0 24 24"><path d="M4 5h16v10H8l-4 4V5Zm3 3v2h10V8H7Zm0 4v2h7v-2H7Z" /></svg>;
 }
@@ -1033,6 +1049,48 @@ function NodeEditor({
           <Field label="来源变量" value={String(data.source || "last_parse")} onChange={(value) => set("source", value)} />
         </>
       ) : null}
+      {kind === "resource_pool" ? (
+        <>
+          <Field label="资源池群聊" value={String(data.poolPeer || "")} onChange={(value) => set("poolPeer", value)} />
+          <Field label="来源变量" value={String(data.source || "last_parse")} onChange={(value) => set("source", value)} />
+          <label className="switch inline">
+            <input
+              type="checkbox"
+              checked={Boolean(data.includePhotos)}
+              onChange={(event) => updateNode(node.id, { includePhotos: event.target.checked })}
+            />
+            <span>转存图片</span>
+          </label>
+          <label className="switch inline">
+            <input
+              type="checkbox"
+              checked={Boolean(data.includeVideos)}
+              onChange={(event) => updateNode(node.id, { includeVideos: event.target.checked })}
+            />
+            <span>转存视频</span>
+          </label>
+          <label className="switch inline">
+            <input
+              type="checkbox"
+              checked={Boolean(data.joinPool)}
+              onChange={(event) => updateNode(node.id, { joinPool: event.target.checked })}
+            />
+            <span>转存前确认账号已加入资源池</span>
+          </label>
+          <label className="switch inline">
+            <input
+              type="checkbox"
+              checked={Boolean(data.dedupe)}
+              onChange={(event) => updateNode(node.id, { dedupe: event.target.checked })}
+            />
+            <span>启用媒体去重</span>
+          </label>
+          {Boolean(data.dedupe) ? (
+            <Field label="去重 DB 路径" value={String(data.dedupeStore || "sessions/resource_pool_seen.sqlite3")} onChange={(value) => set("dedupeStore", value)} />
+          ) : null}
+          <div className="node-context-hint">GitHub Actions 里可用 TG_RESOURCE_POOL_DB 覆盖路径，并用 actions/cache 持久化。</div>
+        </>
+      ) : null}
       {kind === "join" ? (
         <>
           <SelectField
@@ -1090,6 +1148,7 @@ function WorkflowApp() {
     | null
   >(null);
   const [selectedEdgeId, setSelectedEdgeId] = useState("");
+  const [previewWorkflow, setPreviewWorkflow] = useState<Workflow | null>(null);
   const connectingNodeId = useRef<string | null>(null);
   const suppressNextPaneClick = useRef(false);
   const runOutputRef = useRef<HTMLPreElement | null>(null);
@@ -1309,8 +1368,9 @@ function WorkflowApp() {
     setNodes(cloneNodes(initialNodes).map((node) => ({ ...node, data: { ...node.data, nodeId: node.id } })));
     setEdges(cloneEdges(initialEdges));
     setSelectedNodeId("task");
-    setCompileOutput({ signins: "", tasks: "", github: "" });
+    setCompileOutput({ signins: "", tasks: "" });
     setCompileStatus("等待编译");
+    setApplyStatus("未应用到仓库");
     setCompileIssues([]);
     setRunJob(null);
   }
@@ -1443,6 +1503,9 @@ function WorkflowApp() {
     if (savedWorkflowId === flow.id) {
       setSavedWorkflowId("");
     }
+    if (previewWorkflow?.id === flow.id) {
+      setPreviewWorkflow(null);
+    }
     await loadWorkflows();
   }
 
@@ -1457,6 +1520,7 @@ function WorkflowApp() {
     setCompileOutput(output);
     setCompileStatus("已编译");
     setApplyStatus("已生成预览，尚未写入仓库");
+    setPreviewWorkflow(currentWorkflow);
     setPage("run");
   }
 
@@ -1475,6 +1539,7 @@ function WorkflowApp() {
   }
 
   async function startRun(flow: Workflow = currentWorkflow) {
+    setPreviewWorkflow(flow);
     const job = await apiPost<RunJob>("/api/run/start", { workflow: flow, account_limit: accountLimit || undefined, proxy });
     setRunJob(job);
     const stream = new EventSource(`${API}/api/run/stream?id=${job.id}`);
@@ -1498,6 +1563,19 @@ function WorkflowApp() {
     setEdges(cloneEdges(flow.edges));
     setSelectedNodeId(flow.nodes[0]?.id || "");
     setPage("flow");
+  }
+
+  async function previewSavedWorkflow(flow: Workflow) {
+    setPreviewWorkflow(flow);
+    setCompileStatus("正在编译预览");
+    try {
+      const output = await apiPost<CompileOutput>("/api/workflows/compile", flow);
+      setCompileOutput(output);
+      setCompileStatus("已编译预览");
+      setApplyStatus("正在预览已保存工作流，尚未写入仓库");
+    } catch (error) {
+      setCompileStatus(error instanceof Error ? error.message : "预览编译失败");
+    }
   }
 
   function runPreviewNodes(flow: Workflow = currentWorkflow): Node[] {
@@ -1784,6 +1862,7 @@ function WorkflowApp() {
                       <button onClick={() => addNodeAt("send", contextMenu.position)}>创建发送消息</button>
                       <button onClick={() => addNodeAt("parse", contextMenu.position)}>创建解析/提取</button>
                       <button onClick={() => addNodeAt("forward", contextMenu.position)}>创建转发消息</button>
+                      <button onClick={() => addNodeAt("resource_pool", contextMenu.position)}>创建资源池转存</button>
                       <button onClick={() => addNodeAt("join", contextMenu.position)}>创建添加账号/群组</button>
                       <button onClick={() => addNodeAt("link", contextMenu.position)}>创建打开链接</button>
                     </>
@@ -1825,10 +1904,10 @@ function WorkflowApp() {
                 <div className="workflow-list">
                   {workflows.map((flow) => (
                     <article className="workflow-item" key={flow.id}>
-                      <div>
+                      <button className="workflow-preview-button" onClick={() => previewSavedWorkflow(flow)} title="预览工作流">
                         <b>{flow.name}</b>
                         <span>{flow.id}</span>
-                      </div>
+                      </button>
                       <button onClick={() => loadWorkflow(flow)}>编辑</button>
                       <button onClick={() => startRun(flow)}>执行</button>
                       <button className="danger" onClick={() => deleteWorkflow(flow)}>删除</button>
@@ -1843,7 +1922,7 @@ function WorkflowApp() {
                 </div>
                 <Field label="账号数量 0 为全部" type="number" value={accountLimit} onChange={updateAccountLimit} />
                 <div className="save-hint">{accountLimitSavedAt}</div>
-                <pre className="code" ref={runOutputRef}>{runJob?.output || runJob?.error || "暂无输出"}</pre>
+                <pre className="code run-log" ref={runOutputRef}>{runJob?.output || runJob?.error || "暂无输出"}</pre>
               </div>
             </section>
             <section className="panel run-flow-panel">
@@ -1852,8 +1931,8 @@ function WorkflowApp() {
               </div>
               <div className="run-flow-canvas">
                 <ReactFlow
-                  nodes={runPreviewNodes()}
-                  edges={edges}
+                  nodes={runPreviewNodes(previewWorkflow || currentWorkflow)}
+                  edges={(previewWorkflow || currentWorkflow).edges}
                   nodeTypes={nodeTypes}
                   nodesDraggable={false}
                   nodesConnectable={false}

@@ -637,6 +637,10 @@ textarea:focus {
   --tool-accent: #f87171;
 }
 
+.node-tool.kind-resource_pool {
+  --tool-accent: #38bdf8;
+}
+
 .node-tool.kind-link {
   --tool-accent: #22d3ee;
 }
@@ -974,6 +978,12 @@ textarea:focus {
   --node-border: #8f3136;
 }
 
+.flow-node.kind-resource_pool {
+  --node-accent: #38bdf8;
+  --node-accent-soft: #0c2f3f;
+  --node-border: #247a97;
+}
+
 .flow-node.kind-join {
   --node-accent: #34d399;
   --node-accent-soft: #123428;
@@ -1165,6 +1175,37 @@ button.compact {
   padding-inline: 9px;
 }
 
+.workflow-preview-button {
+  display: grid;
+  min-width: 0;
+  justify-items: start;
+  border: 0;
+  padding: 0;
+  background: transparent;
+  text-align: left;
+}
+
+.workflow-preview-button:hover {
+  background: transparent;
+}
+
+.workflow-preview-button b,
+.workflow-preview-button span {
+  overflow: hidden;
+  max-width: 100%;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workflow-preview-button b {
+  color: #f4f8ff;
+}
+
+.workflow-preview-button span {
+  color: #8ea0ba;
+  font-size: 12px;
+}
+
 .run-flow-panel {
   margin-bottom: 16px;
 }
@@ -1199,6 +1240,12 @@ button.compact {
 .code.large {
   min-height: 420px;
   max-height: 680px;
+}
+
+.run-log {
+  height: 360px;
+  min-height: 360px;
+  max-height: 360px;
 }
 
 .content.chat-content {

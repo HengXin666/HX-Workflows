@@ -183,6 +183,51 @@ actions:
     text: "签到"
 ```
 
+### 资源池转存图片/视频
+
+如果签到 bot 会返回图片或视频，可以把这些媒体转存到自己的群聊资源池，并用 SQLite 去重：
+
+```yaml
+actions:
+  - type: send
+    text: "签到"
+  - type: parse
+    after_send: true
+    wait_seconds: 5
+    limit: 5
+    save_as: last_parse
+  - type: resource_pool
+    pool_peer: "@your_pool_group"
+    source: last_parse
+    media_types:
+      - photo
+      - video
+    dedupe: true
+    dedupe_store: sessions/resource_pool_seen.sqlite3
+    join_pool: true
+```
+
+`pool_peer` 可以是公开群用户名、群 ID，或私密邀请链接。`join_pool: true` 会在转存前确认当前账号能访问资源池。
+
+GitHub Actions 运行时文件系统每次都是新的，去重 DB 需要持久化。推荐把路径设到工作区下，并缓存 SQLite 文件和 WAL/SHM 伴随文件：
+
+```yaml
+- uses: actions/cache@v4
+  with:
+    path: |
+      components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3
+      components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3-*
+    key: tg-resource-pool-${{ github.repository }}
+    restore-keys: tg-resource-pool-
+```
+
+也可以通过环境变量覆盖路径：
+
+```yaml
+env:
+  TG_RESOURCE_POOL_DB: components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3
+```
+
 ### 先 `/start` 再点击按钮
 
 ```yaml

@@ -101,6 +101,47 @@ def display_text(value: Any, limit: int | None = None) -> str:
     return text
 
 
+def build_workflow_strip(workflow: dict[str, Any]) -> str:
+    nodes = workflow.get("nodes", []) if isinstance(workflow, dict) else []
+    if not nodes:
+        return ""
+    items = []
+    for index, node in enumerate(nodes, start=1):
+        label = display_text(node.get("label") or node.get("kind") or node.get("id"), 28)
+        kind = display_text(node.get("kind") or "", 18)
+        items.append(
+            '<span style="display:inline-block;margin:0 8px 8px 0;padding:8px 10px;border:1px solid #2d3a4f;'
+            'border-radius:8px;background:#101827;color:#d7e4f5;font-size:12px;line-height:18px;">'
+            f'<strong style="color:#f4f8ff;">{index}. {html.escape(label)}</strong>'
+            f'<br><span style="color:#8ea0ba;">{html.escape(kind)}</span></span>'
+        )
+    return "".join(items)
+
+
+def build_node_log_rows(account: dict[str, Any], workflow: dict[str, Any]) -> str:
+    node_logs = account.get("node_logs", {}) if isinstance(account.get("node_logs"), dict) else {}
+    nodes = workflow.get("nodes", []) if isinstance(workflow, dict) else []
+    rows: list[str] = []
+    for node in nodes:
+        node_id = str(node.get("id") or "")
+        logs = [display_text(item, 420) for item in node_logs.get(node_id, []) if display_text(item)]
+        if not logs:
+            continue
+        label = display_text(node.get("label") or node.get("kind") or node_id, 40)
+        detail = "\n".join(f"- {item}" for item in logs[:6])
+        rows.append(
+            f"""
+            <tr>
+              <td style="width:120px;padding:0 14px 10px 0;color:#8ea0ba;font-size:12px;line-height:18px;vertical-align:top;">{html.escape(label)}</td>
+              <td style="padding:0 0 10px;color:#cbd7ea;font-size:12px;line-height:19px;vertical-align:top;">
+                <pre style="white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;margin:0;font-family:Menlo,Consolas,'Courier New',monospace;font-size:12px;line-height:19px;color:#cbd7ea;">{html.escape(detail)}</pre>
+              </td>
+            </tr>
+            """
+        )
+    return "".join(rows)
+
+
 def build_html_report(report: dict[str, Any]) -> str:
     tasks = report.get("tasks", [])
     total = sum(len(task.get("accounts", [])) for task in tasks)
@@ -117,6 +158,8 @@ def build_html_report(report: dict[str, Any]) -> str:
     sections: list[str] = []
     for task in tasks:
         task_id = display_text(task.get("id"))
+        workflow = task.get("workflow", {}) if isinstance(task.get("workflow"), dict) else {}
+        workflow_strip = build_workflow_strip(workflow)
         cards: list[str] = []
         for account in task.get("accounts", []):
             texts = [display_text(x) for x in account.get("messages", []) if display_text(x)]
@@ -129,6 +172,7 @@ def build_html_report(report: dict[str, Any]) -> str:
                 if status_class == "ok"
                 else "color:#ffb4b4;background:#441818;border-color:#7f2a2a;"
             )
+            node_rows = build_node_log_rows(account, workflow)
             cards.append(
                 f"""
                 <div class="account-card" style="margin:0 0 14px;border:1px solid #233047;border-radius:8px;background:#101827;overflow:hidden;">
@@ -156,6 +200,7 @@ def build_html_report(report: dict[str, Any]) -> str:
                               <pre style="white-space:pre-wrap;word-break:break-word;overflow-wrap:anywhere;margin:0;font-family:Menlo,Consolas,'Courier New',monospace;font-size:12px;line-height:19px;color:#cbd7ea;">{html.escape(display_text(detail, 1600))}</pre>
                             </td>
                           </tr>
+                          {node_rows}
                         </table>
                       </td>
                     </tr>
@@ -168,6 +213,7 @@ def build_html_report(report: dict[str, Any]) -> str:
             <tr>
               <td class="section" id="task-{html.escape(task_id, quote=True)}" style="padding:6px 24px 22px;">
                 <h2 style="margin:14px 0 12px;color:#f4f8ff;font-size:18px;line-height:24px;font-weight:800;">{html.escape(task_id)}</h2>
+                <div style="margin:0 0 14px;">{workflow_strip}</div>
                 {''.join(cards) or '<div style="padding:16px;border:1px solid #233047;border-radius:8px;background:#101827;color:#8ea0ba;font-size:13px;">没有账号执行结果。</div>'}
               </td>
             </tr>

@@ -12,6 +12,7 @@ import asyncio
 import json
 import os
 import re
+import sqlite3
 import subprocess
 import sys
 import traceback
@@ -22,10 +23,10 @@ from pathlib import Path
 from typing import Any
 
 import yaml
-from telethon import TelegramClient
+from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
 from telethon.tl.functions.channels import JoinChannelRequest
-from telethon.tl.functions.messages import ImportChatInviteRequest
+from telethon.tl.functions.messages import CheckChatInviteRequest, ImportChatInviteRequest
 from telethon.tl.types import Channel, Chat, User
 
 try:
@@ -39,6 +40,7 @@ CONFIG_DIR = ROOT / "config"
 DEFAULT_CONFIG = CONFIG_DIR / "signins.yml"
 LEGACY_DEFAULT_CONFIG = ROOT / "signins.yml"
 DEFAULT_REPORT = ROOT / "logs" / "reports" / "tg_signins.json"
+DEFAULT_RESOURCE_POOL_DB = ROOT / "sessions" / "resource_pool_seen.sqlite3"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 TG_LINK_RE = re.compile(r"(?:https?://)?t\.me/[^\s)>\]]+|tg://join\?invite=[A-Za-z0-9_-]+|https?://telegram\.me/[^\s)>\]]+", re.I)
@@ -81,6 +83,7 @@ class RunResult:
     matched: bool
     summary: str
     messages: list[Any]
+    node_logs: dict[str, list[str]]
 
 
 def load_yaml(path: Path) -> dict[str, Any]:
@@ -165,6 +168,98 @@ def parse_proxy(proxy_url: str | None):
 
 def message_text(message: Any) -> str:
     return (getattr(message, "message", None) or getattr(message, "text", None) or "").strip()
+
+
+def resolve_local_path(value: str | None, default: Path) -> Path:
+    raw = os.path.expandvars(str(value or "").strip()) if value else ""
+    return Path(raw).expanduser().resolve() if raw else default.resolve()
+
+
+def media_kind(message: Any) -> str | None:
+    if getattr(message, "photo", None):
+        return "photo"
+    if getattr(message, "video", None) or getattr(message, "video_note", None):
+        return "video"
+    file = getattr(message, "file", None)
+    mime_type = str(getattr(file, "mime_type", "") or "").lower()
+    if mime_type.startswith("image/"):
+        return "photo"
+    if mime_type.startswith("video/"):
+        return "video"
+    return None
+
+
+def media_fingerprint(message: Any) -> str | None:
+    document = getattr(message, "document", None)
+    if document is not None:
+        doc_id = getattr(document, "id", None)
+        if doc_id is not None:
+            return ":".join(
+                [
+                    "document",
+                    str(doc_id),
+                    str(getattr(document, "size", "") or ""),
+                    str(getattr(document, "mime_type", "") or ""),
+                ]
+            )
+
+    photo = getattr(message, "photo", None)
+    if photo is not None:
+        photo_id = getattr(photo, "id", None)
+        if photo_id is not None:
+            return f"photo:{photo_id}"
+
+    file = getattr(message, "file", None)
+    file_id = getattr(file, "id", None)
+    if file_id:
+        return f"file:{file_id}"
+    return None
+
+
+def init_resource_pool_db(path: Path) -> sqlite3.Connection:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    conn = sqlite3.connect(str(path), timeout=30)
+    conn.execute("PRAGMA journal_mode=WAL")
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS resource_pool_seen (
+            fingerprint TEXT PRIMARY KEY,
+            media_type TEXT NOT NULL,
+            pool_peer TEXT NOT NULL,
+            source_peer TEXT,
+            source_message_id INTEGER,
+            account_index INTEGER,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.commit()
+    return conn
+
+
+def resource_seen(conn: sqlite3.Connection, fingerprint: str) -> bool:
+    row = conn.execute("SELECT 1 FROM resource_pool_seen WHERE fingerprint = ? LIMIT 1", (fingerprint,)).fetchone()
+    return row is not None
+
+
+def mark_resource_seen(
+    conn: sqlite3.Connection,
+    fingerprint: str,
+    media_type: str,
+    pool_peer: str,
+    source_peer: str,
+    source_message_id: int | None,
+    account_index: int,
+) -> None:
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO resource_pool_seen
+            (fingerprint, media_type, pool_peer, source_peer, source_message_id, account_index)
+        VALUES (?, ?, ?, ?, ?, ?)
+        """,
+        (fingerprint, media_type, pool_peer, source_peer, source_message_id, account_index),
+    )
+    conn.commit()
 
 
 def listify(value: Any) -> list[str]:
@@ -269,14 +364,37 @@ def result_to_report_item(result: RunResult) -> dict[str, Any]:
         "matched": result.matched,
         "summary": result.summary,
         "messages": result_texts(result),
+        "node_logs": result.node_logs,
     }
 
 
-def write_report(grouped: dict[str, list[RunResult]], path: Path) -> None:
+def job_to_report_workflow(job: dict[str, Any]) -> dict[str, Any]:
+    nodes: list[dict[str, str]] = []
+    edges: list[dict[str, str]] = []
+    previous = str(job.get("node_id") or "")
+    if previous:
+        nodes.append({"id": previous, "kind": "task", "label": str(job.get("id") or previous)})
+    seen = {previous} if previous else set()
+    for action in job.get("actions", []) or []:
+        node_id = str(action.get("node_id") or "")
+        if not node_id:
+            continue
+        if node_id not in seen:
+            nodes.append({"id": node_id, "kind": str(action.get("type") or "action"), "label": str(action.get("type") or node_id)})
+            seen.add(node_id)
+        if previous and previous != node_id:
+            edges.append({"source": previous, "target": node_id})
+        previous = node_id
+    return {"nodes": nodes, "edges": edges}
+
+
+def write_report(grouped: dict[str, list[RunResult]], path: Path, jobs: list[dict[str, Any]] | None = None) -> None:
+    jobs_by_id = {str(job.get("id")): job for job in jobs or [] if isinstance(job, dict)}
     report = {
         "tasks": [
             {
                 "id": job_id,
+                "workflow": job_to_report_workflow(jobs_by_id.get(job_id, {})),
                 "accounts": [result_to_report_item(result) for result in results],
             }
             for job_id, results in grouped.items()
@@ -298,28 +416,75 @@ def send_report_with_emall(report_path: Path) -> None:
     subprocess.run(command, cwd=WORKFLOWS_ROOT / "emall", check=True)
 
 
-async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str, Any]]) -> dict[str, Any]:
+async def join_target(client: TelegramClient, target: str) -> Any | None:
+    normalized = normalize_join_target(target)
+    try:
+        if normalized.startswith("+"):
+            updates = await client(ImportChatInviteRequest(normalized[1:]))
+            chats = getattr(updates, "chats", None) or []
+            if chats:
+                print(f"已通过邀请链接加入: {entity_label(chats[0])}", flush=True)
+                return chats[0]
+            return None
+
+        entity = await client.get_entity(normalized)
+        if isinstance(entity, Channel):
+            await client(JoinChannelRequest(entity))
+            print(f"已加入频道/群组: {entity_label(entity)}", flush=True)
+            return entity
+        if isinstance(entity, Chat):
+            print(f"普通群组已可访问，无需加入: {entity_label(entity)}", flush=True)
+            return entity
+        if isinstance(entity, User):
+            if getattr(entity, "bot", False):
+                await client.send_message(entity, "/start")
+                print(f"已向 bot 发起对话: {entity_label(entity)}", flush=True)
+                return entity
+            print(f"目标是用户账号，已确认可访问: {entity_label(entity)}", flush=True)
+            return entity
+        raise RuntimeError(f"不支持的 join 目标类型: {entity.__class__.__name__}")
+    except errors.UserAlreadyParticipantError:
+        print(f"账号已在目标中: {target}", flush=True)
+        if not normalized.startswith("+"):
+            return await client.get_entity(normalized)
+        checked = await client(CheckChatInviteRequest(normalized[1:]))
+        chat = getattr(checked, "chat", None)
+        if chat:
+            return chat
+        return None
+
+
+async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str, Any]], account_index: int) -> dict[str, Any]:
     current_peer = peer
     last_messages: list[Any] = []
-    context: dict[str, Any] = {}
+    context: dict[str, Any] = {"node_logs": {}}
+
+    def log_node(node_id: str, message: str) -> None:
+        if node_id:
+            context.setdefault("node_logs", {}).setdefault(node_id, []).append(message)
+
     for action in actions:
         action_type = str(action.get("type", "")).strip().lower()
         node_id = str(action.get("node_id") or "")
         if node_id:
             print(f"::node::{node_id}::start::{action_type}", flush=True)
+            log_node(node_id, f"开始 {action_type}")
         try:
             if action_type == "open":
                 current_peer = str(action.get("peer") or current_peer).strip()
                 if not current_peer:
                     raise RuntimeError("open action 缺少 peer")
                 print(f"打开对话: {current_peer}", flush=True)
+                log_node(node_id, f"打开对话: {current_peer}")
                 await client.get_entity(current_peer)
                 if node_id:
                     print(f"::node::{node_id}::done::{action_type}", flush=True)
+                    log_node(node_id, f"完成 {action_type}")
                 continue
         except Exception:
             if node_id:
                 print(f"::node::{node_id}::error::{action_type}", flush=True)
+                log_node(node_id, f"失败 {action_type}")
             raise
 
         if action_type == "open":
@@ -327,6 +492,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             if not current_peer:
                 raise RuntimeError("open action 缺少 peer")
             print(f"打开对话: {current_peer}", flush=True)
+            log_node(node_id, f"打开对话: {current_peer}")
             await client.get_entity(current_peer)
 
         elif action_type == "open_link":
@@ -341,6 +507,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             if not url:
                 raise RuntimeError("open_link action 缺少 url")
             print(f"打开链接: {url}", flush=True)
+            log_node(node_id, f"打开链接: {url}")
             await client.send_message("me", url)
 
         elif action_type == "join":
@@ -355,36 +522,22 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             if not target:
                 raise RuntimeError("join action 缺少 target")
             print(f"加入账号/群组: {target}", flush=True)
-            normalized = normalize_join_target(target)
-            if normalized.startswith("+"):
-                await client(ImportChatInviteRequest(normalized[1:]))
-            else:
-                entity = await client.get_entity(normalized)
-                if isinstance(entity, Channel):
-                    await client(JoinChannelRequest(entity))
-                    print(f"已加入频道/群组: {entity_label(entity)}", flush=True)
-                elif isinstance(entity, Chat):
-                    print(f"普通群组已可访问，无需加入: {entity_label(entity)}", flush=True)
-                elif isinstance(entity, User):
-                    if getattr(entity, "bot", False):
-                        await client.send_message(entity, "/start")
-                        current_peer = normalized
-                        print(f"已向 bot 发起对话: {entity_label(entity)}", flush=True)
-                    else:
-                        current_peer = normalized
-                        print(f"目标是用户账号，已确认可访问: {entity_label(entity)}", flush=True)
-                else:
-                    raise RuntimeError(f"不支持的 join 目标类型: {entity.__class__.__name__}")
+            log_node(node_id, f"加入账号/群组: {target}")
+            next_peer = await join_target(client, target)
+            if next_peer:
+                current_peer = next_peer
 
         elif action_type == "send":
             text = str(action.get("text") if action.get("text") is not None else action.get("cmd", ""))
             if not text:
                 raise RuntimeError("send action 缺少 text/cmd")
             print(f"发送消息到 {current_peer}: {text}", flush=True)
+            log_node(node_id, f"发送消息到 {current_peer}: {text}")
             sent = await client.send_message(current_peer, text)
             context["last_send_peer"] = current_peer
             context["last_send_id"] = getattr(sent, "id", None)
             print(f"已发送消息 id={context['last_send_id']}", flush=True)
+            log_node(node_id, f"已发送消息 id={context['last_send_id']}")
 
         elif action_type == "click":
             text = str(action.get("text") if action.get("text") is not None else action.get("cmd", ""))
@@ -392,6 +545,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                 raise RuntimeError("click action 缺少 text/cmd")
             search_limit = int(action.get("search_limit", 5))
             print(f"查找并点击按钮: {text}", flush=True)
+            log_node(node_id, f"查找并点击按钮: {text}")
             messages = await client.get_messages(current_peer, limit=search_limit)
             clicked = False
             for msg in messages:
@@ -399,6 +553,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                     await msg.click(text=text)
                     clicked = True
                     print(f"已点击按钮: {text}", flush=True)
+                    log_node(node_id, f"已点击按钮: {text}")
                     break
                 except Exception:
                     continue
@@ -408,6 +563,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
         elif action_type == "wait":
             seconds = float(action.get("seconds", 1))
             print(f"等待 {seconds} 秒", flush=True)
+            log_node(node_id, f"等待 {seconds} 秒")
             await asyncio.sleep(seconds)
 
         elif action_type == "parse":
@@ -425,8 +581,10 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                 wait_seconds = float(action.get("wait_seconds", 3) or 0)
                 if wait_seconds > 0:
                     print(f"等待回执 {wait_seconds} 秒", flush=True)
+                    log_node(node_id, f"等待回执 {wait_seconds} 秒")
                     await asyncio.sleep(wait_seconds)
                 print(f"无条件解析发送消息之后的回执: peer={source_peer}, sent_id={sent_id}, limit={limit}", flush=True)
+                log_node(node_id, f"解析发送后回执: peer={source_peer}, limit={limit}")
                 scanned = list(await client.get_messages(source_peer, limit=limit))
                 last_messages = [
                     msg
@@ -436,6 +594,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
                 ]
             else:
                 print(f"解析最近 {limit} 条消息: {pattern}", flush=True)
+                log_node(node_id, f"解析最近 {limit} 条消息: {pattern}")
                 last_messages = list(await client.get_messages(current_peer, limit=limit))
             matched = []
             extracted: list[str] = []
@@ -463,6 +622,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             if after_send:
                 context["last_parse_unconditional"] = True
             print(f"解析命中 {len(matched)} 条消息，提取 {len(extracted)} 个目标", flush=True)
+            log_node(node_id, f"解析命中 {len(matched)} 条消息，提取 {len(extracted)} 个目标")
             if matched:
                 print("解析结果:", flush=True)
                 for idx, msg in enumerate(matched, start=1):
@@ -478,8 +638,71 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
             source = str(action.get("source", "last_parse"))
             selected = context.get(source) or context.get("last_parse") or last_messages
             print(f"转发 {len(selected)} 条消息到 {to_peer}", flush=True)
+            log_node(node_id, f"转发 {len(selected)} 条消息到 {to_peer}")
             if selected:
                 await client.forward_messages(to_peer, selected)
+
+        elif action_type == "resource_pool":
+            pool_peer = str(action.get("pool_peer") or action.get("to_peer") or "").strip()
+            if not pool_peer:
+                raise RuntimeError("resource_pool action 缺少 pool_peer")
+            pool_target: Any = pool_peer
+            if bool(action.get("join_pool", True)):
+                print(f"确认账号已加入资源池: {pool_peer}", flush=True)
+                log_node(node_id, f"确认账号已加入资源池: {pool_peer}")
+                joined = await join_target(client, pool_peer)
+                if joined is not None:
+                    pool_target = joined
+
+            source = str(action.get("source", "last_parse"))
+            selected = context.get(source) or context.get("last_parse") or last_messages
+            if not isinstance(selected, list):
+                selected = [selected]
+            allowed_types = {item.lower() for item in listify(action.get("media_types") or ["photo", "video"])}
+            db_path = resolve_local_path(
+                os.environ.get("TG_RESOURCE_POOL_DB") or str(action.get("dedupe_store") or ""),
+                DEFAULT_RESOURCE_POOL_DB,
+            )
+            dedupe = bool(action.get("dedupe", True))
+            forwarded = 0
+            skipped_duplicate = 0
+            skipped_non_media = 0
+            skipped_unknown = 0
+            conn = init_resource_pool_db(db_path) if dedupe else None
+            try:
+                for msg in selected:
+                    kind = media_kind(msg)
+                    if not kind or kind not in allowed_types:
+                        skipped_non_media += 1
+                        continue
+                    fingerprint = media_fingerprint(msg)
+                    if dedupe and not fingerprint:
+                        skipped_unknown += 1
+                        print(f"跳过无法生成去重指纹的媒体消息 id={getattr(msg, 'id', '')}", flush=True)
+                        continue
+                    if conn is not None and fingerprint and resource_seen(conn, fingerprint):
+                        skipped_duplicate += 1
+                        continue
+                    await client.forward_messages(pool_target, msg)
+                    forwarded += 1
+                    if conn is not None and fingerprint:
+                        mark_resource_seen(
+                            conn,
+                            fingerprint,
+                            kind,
+                            pool_peer,
+                            str(current_peer),
+                            getattr(msg, "id", None),
+                            account_index,
+                        )
+                print(
+                    f"资源池转存完成: 转发 {forwarded}，重复 {skipped_duplicate}，非图片/视频 {skipped_non_media}，无指纹 {skipped_unknown}，db={db_path}",
+                    flush=True,
+                )
+                log_node(node_id, f"资源池转存完成: 转发 {forwarded}，重复 {skipped_duplicate}，非图片/视频 {skipped_non_media}，无指纹 {skipped_unknown}")
+            finally:
+                if conn is not None:
+                    conn.close()
 
         else:
             raise RuntimeError(f"不支持的 action type: {action_type}")
@@ -491,6 +714,7 @@ async def run_actions(client: TelegramClient, peer: str, actions: list[dict[str,
 
         if node_id:
             print(f"::node::{node_id}::done::{action_type}", flush=True)
+            log_node(node_id, f"完成 {action_type}")
 
     return context
 
@@ -564,9 +788,10 @@ async def run_one_account(job: dict[str, Any], defaults: dict[str, Any], session
     client = TelegramClient(StringSession(session), api_id, api_hash, proxy=proxy)
 
     messages: list[Any] = []
+    context: dict[str, Any] = {"node_logs": {}}
     try:
         async with client:
-            context = await run_actions(client, peer, actions)
+            context = await run_actions(client, peer, actions, account_index)
             messages = await collect_messages(client, peer, collect, job_forward)
             parsed_messages = context.get("last_parse")
             if isinstance(parsed_messages, list) and parsed_messages:
@@ -589,6 +814,7 @@ async def run_one_account(job: dict[str, Any], defaults: dict[str, Any], session
                 matched=matched,
                 summary="任务执行成功。",
                 messages=messages,
+                node_logs=dict(context.get("node_logs", {})) if isinstance(context.get("node_logs"), dict) else {},
             )
             await handle_forward(client, job_forward, result)
             if job_node_id:
@@ -605,6 +831,7 @@ async def run_one_account(job: dict[str, Any], defaults: dict[str, Any], session
             matched=False,
             summary=summary,
             messages=messages,
+            node_logs=dict(context.get("node_logs", {})) if isinstance(context.get("node_logs"), dict) else {},
         )
         try:
             if client.is_connected():
@@ -677,6 +904,7 @@ async def run_job_collect(config: dict[str, Any], job_id: str) -> tuple[list[Run
                     matched=False,
                     summary=str(exc),
                     messages=[],
+                    node_logs={},
                 )
             )
 
@@ -704,7 +932,7 @@ async def run_enabled(config: dict[str, Any], mail: bool, report_path: Path) -> 
         grouped[job_id] = results
         exit_code = max(exit_code, code)
 
-    write_report(grouped, report_path)
+    write_report(grouped, report_path, config.get("jobs", []) or [])
     if mail:
         send_report_with_emall(report_path)
     return exit_code

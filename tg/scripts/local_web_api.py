@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import asyncio
 import base64
+import errno
 import json
 import os
 import re
@@ -42,6 +43,7 @@ GITHUB_WORKFLOW = ROOT.parent / ".github" / "workflows" / "tg-orchestrator.yml"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
 COMMAND_RE = re.compile(r"(?<!\S)/[A-Za-z0-9_]{1,32}")
+CLIENT_DISCONNECT_ERRNOS = {errno.EPIPE, errno.ECONNRESET}
 
 
 @dataclass
@@ -581,6 +583,24 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     "exclude": {"contains": [], "regex": []},
                 }
                 actions.append({"type": "forward", "node_id": current, "to_peer": str(data.get("toPeer") or ""), "source": str(data.get("source") or "last_parse")})
+            elif node_type == "resource_pool":
+                actions.append({
+                    "type": "resource_pool",
+                    "node_id": current,
+                    "pool_peer": str(data.get("poolPeer") or ""),
+                    "source": str(data.get("source") or "last_parse"),
+                    "media_types": [
+                        kind
+                        for kind, enabled in {
+                            "photo": data.get("includePhotos", True),
+                            "video": data.get("includeVideos", True),
+                        }.items()
+                        if bool(enabled)
+                    ] or ["photo", "video"],
+                    "dedupe": bool(data.get("dedupe", True)),
+                    "dedupe_store": str(data.get("dedupeStore") or "sessions/resource_pool_seen.sqlite3"),
+                    "join_pool": bool(data.get("joinPool", True)),
+                })
             elif node_type == "link":
                 actions.append({"type": "open_link", "node_id": current, "url": str(data.get("url") or "")})
             elif node_type == "join":
@@ -654,6 +674,59 @@ def flow_to_tasks(flow: dict[str, Any]) -> dict[str, Any]:
                 "timeout_minutes": 30,
             }
         ],
+    }
+
+
+def flow_to_github_actions(flow: dict[str, Any]) -> dict[str, Any]:
+    job_id = str(flow.get("id") or "web-flow")
+    return {
+        "name": f"TG {job_id}",
+        "on": {
+            "workflow_dispatch": None,
+            "schedule": [
+                {"cron": "15 16 * * *"},
+            ],
+        },
+        "jobs": {
+            "tg": {
+                "runs-on": "ubuntu-latest",
+                "env": {
+                    "TG_SESSION_STRINGS": "${{ secrets.TG_SESSION_STRINGS }}",
+                    "TG_PROXY": "${{ secrets.TG_PROXY }}",
+                    "TG_RESOURCE_POOL_DB": "components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3",
+                    "SMTP_HOST": "${{ secrets.SMTP_HOST }}",
+                    "SMTP_USERNAME": "${{ secrets.SMTP_USERNAME }}",
+                    "SMTP_PASSWORD": "${{ secrets.SMTP_PASSWORD }}",
+                    "SMTP_TO": "${{ secrets.SMTP_TO }}",
+                },
+                "steps": [
+                    {"uses": "actions/checkout@v4"},
+                    {
+                        "name": "Restore resource pool dedupe DB",
+                        "uses": "actions/cache@v4",
+                        "with": {
+                            "path": "\n".join(
+                                [
+                                    "components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3",
+                                    "components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3-*",
+                                ]
+                            ),
+                            "key": "tg-resource-pool-${{ github.repository }}",
+                            "restore-keys": "tg-resource-pool-",
+                        },
+                    },
+                    {
+                        "name": "Install uv",
+                        "uses": "astral-sh/setup-uv@v5",
+                    },
+                    {
+                        "name": "Run TG tasks",
+                        "run": "uv run python runner.py --config config/tasks.yml run-due",
+                        "working-directory": "components/HX-Workflows/tg",
+                    },
+                ],
+            },
+        },
     }
 
 
@@ -854,27 +927,37 @@ class Handler(BaseHTTPRequestHandler):
         raw = self.rfile.read(length).decode("utf-8") if length else "{}"
         return json.loads(raw or "{}")
 
+    def is_client_disconnect(self, exc: BaseException) -> bool:
+        return isinstance(exc, (BrokenPipeError, ConnectionResetError)) or (
+            isinstance(exc, OSError) and exc.errno in CLIENT_DISCONNECT_ERRNOS
+        )
+
     def send_json(self, payload: Any, status: HTTPStatus = HTTPStatus.OK) -> None:
         data = json.dumps(payload, ensure_ascii=False).encode("utf-8")
-        self.send_response(status)
-        self.send_header("Content-Type", "application/json; charset=utf-8")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
-        self.send_header("Access-Control-Allow-Headers", "Content-Type")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
+        try:
+            self.send_response(status)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
+            self.send_header("Access-Control-Allow-Headers", "Content-Type")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+        except OSError as exc:
+            if self.is_client_disconnect(exc):
+                return
+            raise
 
     def send_sse(self, job_id: str) -> None:
-        self.send_response(HTTPStatus.OK)
-        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
-        self.send_header("Cache-Control", "no-cache")
-        self.send_header("Connection", "keep-alive")
-        self.send_header("Access-Control-Allow-Origin", "*")
-        self.end_headers()
         condition = run_events.setdefault(job_id, threading.Condition())
         last_payload = ""
         try:
+            self.send_response(HTTPStatus.OK)
+            self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+            self.send_header("Cache-Control", "no-cache")
+            self.send_header("Connection", "keep-alive")
+            self.send_header("Access-Control-Allow-Origin", "*")
+            self.end_headers()
             while True:
                 with jobs_lock:
                     job = run_jobs.get(job_id)
@@ -888,8 +971,10 @@ class Handler(BaseHTTPRequestHandler):
                     break
                 with condition:
                     condition.wait(timeout=1.5)
-        except BrokenPipeError:
-            return
+        except OSError as exc:
+            if self.is_client_disconnect(exc):
+                return
+            raise
 
     def do_OPTIONS(self) -> None:
         self.send_json({})
