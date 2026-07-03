@@ -1,6 +1,6 @@
 timezone: Asia/Shanghai
 tasks:
-- id: tg-sign-daily-sign
+- id: tg-sign-hx-flow
   enabled: true
   schedule:
   - daily:00:15

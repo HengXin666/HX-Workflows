@@ -13,7 +13,8 @@ defaults:
     chat_id_secret: TG_FORWARD_CHAT_ID
     include:
       contains:
-      - 签到成功|积分
+      - 签到成功
+      - 积分
       regex: []
     exclude:
       contains:
@@ -21,44 +22,53 @@ defaults:
       regex: []
     max_messages: 5
 jobs:
-- id: daily-sign
+- id: gpt-get
   node_id: task
   enabled: true
-  peer: '@example_bot'
+  peer: '@freexzteam_bot'
   accounts_secret: TG_SESSION_STRINGS
   actions:
   - type: open
     node_id: open-a
-    peer: '@example_bot'
+    peer: '@freexzteam_bot'
     regex: false
   - type: send
     node_id: send-a
-    text: 签到
+    text: 📅 每日签到
   - type: parse
     node_id: parse-a
-    pattern: 签到成功|积分
+    pattern: ''
+    regex: false
+    save_as: last_parse
+    extract: messages
+    after_send: true
+    wait_seconds: 3.0
+  collect:
+    last_messages: 5
+  forward:
+    enabled: false
+- id: WYpanbot
+  node_id: task-1783016288383
+  enabled: true
+  peer: '@WYpanbot'
+  accounts_secret: TG_SESSION_STRINGS
+  actions:
+  - type: open
+    node_id: open-1783016505435
+    peer: '@WYpanbot'
+    regex: false
+  - type: send
+    node_id: send-1783016546475
+    text: /qd
+  - type: parse
+    node_id: parse-1783016777947
+    pattern: ''
     regex: true
     save_as: last_parse
     extract: messages
     after_send: true
     wait_seconds: 3.0
-  - type: forward
-    node_id: forward-a
-    to_peer: me
-    source: last_parse
   collect:
     last_messages: 5
   forward:
-    enabled: true
-    mode: user_forward
-    to_peer: me
-    when:
-    - matched
-    - failure
-    include:
-      contains:
-      - 签到成功|积分
-      regex: []
-    exclude:
-      contains: []
-      regex: []
+    enabled: false

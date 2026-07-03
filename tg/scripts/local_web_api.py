@@ -677,7 +677,21 @@ def compile_flow_outputs(flow: dict[str, Any]) -> dict[str, str]:
     }
 
 
+def is_default_example_flow(flow: dict[str, Any]) -> bool:
+    if str(flow.get("id") or "") != "daily-sign":
+        return False
+    nodes = flow.get("nodes", [])
+    if len(nodes) != 5:
+        return False
+    node_data = [(node.get("data") or {}) for node in nodes]
+    has_example_peer = any(str(data.get("peer") or "") == "@example_bot" for data in node_data)
+    has_example_task = any(str(data.get("taskId") or "") == "daily-sign" for data in node_data)
+    return has_example_peer and has_example_task
+
+
 def apply_flow_configs(flow: dict[str, Any]) -> dict[str, Any]:
+    if is_default_example_flow(flow):
+        raise ValueError("当前画布还是默认示例任务，请先加载或保存真实工作流后再应用")
     outputs = compile_flow_outputs(flow)
     files = {
         "signins": SIGNINS_CONFIG,
@@ -980,7 +994,10 @@ class Handler(BaseHTTPRequestHandler):
             self.send_json(compile_flow_outputs(body))
             return
         if parsed.path == "/api/workflows/apply":
-            self.send_json(apply_flow_configs(body))
+            try:
+                self.send_json(apply_flow_configs(body))
+            except ValueError as exc:
+                self.send_json({"error": str(exc)}, HTTPStatus.BAD_REQUEST)
             return
         if parsed.path == "/api/run/start":
             flow = body.get("workflow") or body
