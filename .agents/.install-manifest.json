@@ -1,0 +1,51 @@
+{
+  "mode": "modify",
+  "created": [
+    "scripts/verify.sh",
+    "scripts/check_arch.py",
+    "tg/tests/test_runner.py",
+    "tg/tests/test_workflow_modules.py",
+    "tg/scripts/local_web_accounts.py",
+    "tg/scripts/local_web_flows.py",
+    "tg/scripts/local_web_server.py",
+    "tg/scripts/local_web_telegram.py",
+    "tg/scripts/signer_actions.py",
+    "tg/scripts/signer_core.py",
+    "tg/scripts/signer_jobs.py",
+    "tg/scripts/signer_reporting.py",
+    "emall/tests/test_send_tg_report.py",
+    "bilibili-api/tests/test_core.py",
+    ".github/workflows/verify.yml",
+    ".claude/settings.json",
+    ".claude/hooks/clean_chars.sh",
+    ".claude/hooks/verify_repo.sh",
+    ".claude/rules/architecture.md",
+    ".claude/rules/naming.md",
+    ".codex/hooks.json",
+    ".codex/hooks/clean_chars.sh",
+    ".codex/hooks/verify_repo.sh",
+    ".codex/rules/architecture.md",
+    ".codex/rules/naming.md",
+    ".agents/.install-manifest.json"
+  ],
+  "modified": [
+    "tg/runner.py",
+    "tg/pyproject.toml",
+    "tg/scripts/local_web_api.py",
+    "tg/scripts/sign_from_config.py",
+    "scripts/verify.sh",
+    ".agents/.install-manifest.json"
+  ],
+  "skipped": [
+    "commit-msg hook: opt-in only and not requested",
+    "formatter installation: no existing project formatter to reuse; Ruff lint is installed for TG",
+    "existing scheduled workflows: real external S4 jobs remain separate from PR verification"
+  ],
+  "commands": [
+    "bash scripts/verify.sh",
+    "python .codex/skills/hx-test-pipeline/scripts/verify.py --root . --strict"
+  ],
+  "logs": [
+    ".git/hx-init/logs/repository-verify-latest.log"
+  ]
+}

@@ -11,9 +11,7 @@ from __future__ import annotations
 import argparse
 import datetime as dt
 import os
-import shlex
 import subprocess
-import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
@@ -104,12 +102,18 @@ def minute_matches(expr: str, now: dt.datetime) -> bool:
 
     if expr.startswith("hourly:"):
         minute = int(expr.split(":", 1)[1])
+        if not 0 <= minute <= 59:
+            raise ValueError("hourly:MM requires MM in 0..59")
         return now.minute == minute
 
     if expr.startswith("daily:") or expr.startswith("cron:"):
         _, value = expr.split(":", 1)
         hour_s, minute_s = value.split(":", 1)
-        return now.hour == int(hour_s) and now.minute == int(minute_s)
+        hour = int(hour_s)
+        minute = int(minute_s)
+        if not 0 <= hour <= 23 or not 0 <= minute <= 59:
+            raise ValueError("daily:HH:MM requires HH in 0..23 and MM in 0..59")
+        return now.hour == hour and now.minute == minute
 
     raise ValueError(f"unsupported schedule expression: {expr}")
 
