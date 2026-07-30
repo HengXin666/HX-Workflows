@@ -183,6 +183,32 @@ actions:
     text: "签到"
 ```
 
+### 持续请求随机资源并汇总链接
+
+下面的 action 链会让 `TG_SESSION_STRINGS` 中的每个账号向当前 `peer` 请求 20 次，按固定间隔读取新回执，并把所有唯一链接持久化：
+
+```yaml
+actions:
+  - type: continuous_request
+    request_mode: button
+    request_text: "随机获取资源"
+    repeat_count: 20
+    interval_seconds: 3
+    response_wait_seconds: 2
+    response_limit: 10
+    max_failures: 3
+    save_as: resource_responses
+    links_save_as: resource_records
+  - type: resource_catalog
+    source: resource_records
+    dedupe_store: sessions/resource_catalog.sqlite3
+    export_path: sessions/resource_links.json
+```
+
+`request_mode` 可用 `button` 或 `message`。资源目录按规范化后的完整 URL 去重，保留 path、query 和 fragment，并记录每次发现的账号序号、轮次及来源消息。`resource_responses` 仍保留原始 Telegram 消息；需要转存图片或视频时，把 `resource_pool` 放在 `resource_catalog` 前面，转发后的资源池消息链接会追加到 `resource_records`。
+
+持续请求是有界循环：`repeat_count` 必须为 `1..1000`，`interval_seconds` 必须为 `0.5..3600`。随机采样在没有资源总数或完成信号时无法证明绝对穷尽，应按可接受的请求预算配置次数。
+
 ### 资源池转存图片/视频
 
 如果签到 bot 会返回图片或视频，可以把这些媒体转存到自己的群聊资源池，并用 SQLite 去重：
@@ -217,8 +243,8 @@ GitHub Actions 运行时文件系统每次都是新的，去重 DB 需要持久�
     path: |
       components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3
       components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3-*
-    key: tg-resource-pool-${{ github.repository }}
-    restore-keys: tg-resource-pool-
+    key: tg-resource-pool-${{ github.repository }}-${{ github.run_id }}
+    restore-keys: tg-resource-pool-${{ github.repository }}-
 ```
 
 也可以通过环境变量覆盖路径：

@@ -18,31 +18,29 @@ import {
   type NodeChange,
   type NodeProps,
 } from "@xyflow/react";
+import { Copy, ExternalLink, ListChecks, RefreshCw, Repeat2, Square, Users } from "lucide-react";
 import "@xyflow/react/dist/style.css";
+import { AppSidebar, type Page } from "./components/AppSidebar";
+import { AccountAvatar } from "./components/AccountAvatar";
+import { AccountCenter } from "./components/AccountCenter";
+import { GithubManager } from "./components/GithubManager";
+import { BotOrchestrator } from "./components/BotOrchestrator";
+import { ResourcePreviewPage, type ResourcePreviewFile } from "./components/ResourcePreviewPage";
+import { TelegramMessageContent } from "./components/TelegramMessageContent";
+import { API, ApiError, apiDelete, apiGet, apiPost } from "./lib/api";
+import type { Account, QrJob, Role } from "./lib/accounts";
+import {
+  CONTINUOUS_REQUEST_LIMITS,
+  validateContinuousRequest,
+  validatePreviewCatalog,
+  validateResourceCatalog,
+} from "./lib/continuousRequest";
+import { resolveCommandAfterLoad } from "./lib/botCommands";
+import { effectiveInputMode, inferUpstreamInput } from "./lib/flowInputs";
+import { isRunActiveStatus, isRunTerminalStatus, shouldAcceptRunStatus } from "./lib/runControl";
+import { linkWindowTarget, safeResourceHref, type ResourcePreview, type ResourcePreviewOccurrence } from "./lib/resourcePreviews";
+import type { TelegramMessage } from "./lib/telegramMessages";
 
-type Page = "home" | "chat" | "flow" | "run";
-type Role = "main" | "alt";
-
-type Account = {
-  id: string;
-  role: Role;
-  name: string;
-  username: string;
-  telegram_id: string;
-  avatar: string;
-  source: string;
-  masked_session: string;
-};
-
-type QrJob = {
-  id: string;
-  role: Role;
-  status: string;
-  url?: string;
-  qr_image?: string;
-  account?: Account;
-  error?: string;
-};
 
 type Workflow = {
   id: string;
@@ -77,25 +75,60 @@ type RunJob = {
   completed_nodes?: string[];
   failed_node?: string | null;
   error?: string;
+  resource_links?: ResourceLink[];
+  resource_previews?: ResourcePreview[];
 };
+
+type ResourceLink = {
+  url: string;
+  source_peer?: string;
+  source_message_id?: number | null;
+  message_link?: string;
+  account_index?: number;
+  round?: number;
+  seen_count?: number;
+  is_new?: boolean;
+};
+
+type ResourcePreviewsPayload = {
+  previews: ResourcePreview[];
+  path: string;
+  selected_path: string;
+  files: ResourcePreviewFile[];
+  updated_at?: number | null;
+};
+
+type RunAccountScope = "all" | "alts";
+const ACTIVE_RUN_STORAGE_KEY = "tg.activeRunId";
+const MAX_ACCOUNT_CONCURRENCY = 8;
 
 type Dialog = {
   id: string;
   title: string;
   username: string;
   type: string;
+  is_group: boolean;
+  avatar: string;
   unread_count: number;
   date: string;
   last_message: string;
 };
 
-type ChatMessage = {
-  id: string;
-  date: string;
-  out: boolean;
-  sender: string;
-  text: string;
+type ChatFocus = {
+  accountId: string;
+  peer: string;
+  messageId: number;
+  token: string;
 };
+
+function chatFocusFromLocation(): ChatFocus | null {
+  const params = new URLSearchParams(window.location.search);
+  const accountId = params.get("account") || "";
+  const peer = params.get("peer") || "";
+  const messageId = Number(params.get("message") || "0");
+  if (!accountId || !peer || !Number.isInteger(messageId) || messageId < 1) return null;
+  return { accountId, peer, messageId, token: `${accountId}:${peer}:${messageId}` };
+}
 
 type BotCommand = {
   command: string;
@@ -106,13 +139,33 @@ type BotCommandPayload = {
   commands: BotCommand[];
   is_bot?: boolean;
   source?: string;
+  partial?: boolean;
+  warning?: string;
+};
+
+type ResourceGroupJob = {
+  id: string;
+  title: string;
+  owner_account_id: string;
+  status: string;
+  total: number;
+  completed: number;
+  joined: number;
+  already: number;
+  failed: number;
+  invite_link?: string;
+  group_id?: string;
+  error?: string;
 };
 
 const nodeCatalog = [
   { type: "task", title: "任务定义", desc: "开始一个顺序任务段", icon: "task" },
   { type: "open", title: "打开对话", desc: "选择 bot、群或频道", icon: "chat" },
   { type: "send", title: "发送消息", desc: "文本、命令或按钮", icon: "send" },
+  { type: "continuous_request", title: "持续请求", desc: "按次数和固定间隔请求", icon: "repeat" },
+  { type: "preview_catalog", title: "资源预览索引", desc: "按按钮资源键保存预览", icon: "catalog" },
   { type: "parse", title: "解析/提取", desc: "提取消息和按钮链接", icon: "filter" },
+  { type: "resource_catalog", title: "资源链接去重", desc: "持久化唯一资源链接", icon: "catalog" },
   { type: "join", title: "添加账号/群组", desc: "加入链接或变量目标", icon: "plus" },
   { type: "forward", title: "转发消息", desc: "转发解析结果", icon: "forward" },
   { type: "resource_pool", title: "资源池转存", desc: "只转发图片/视频并去重", icon: "archive" },
@@ -123,7 +176,10 @@ const labels: Record<string, string> = {
   task: "任务定义",
   open: "打开对话",
   send: "发送消息",
+  continuous_request: "持续请求",
+  preview_catalog: "资源预览索引",
   parse: "解析/提取",
+  resource_catalog: "资源链接去重",
   forward: "转发消息",
   resource_pool: "资源池转存",
   join: "添加账号/群组",
@@ -132,27 +188,35 @@ const labels: Record<string, string> = {
 
 const nextNodeKinds: Record<string, string[]> = {
   task: ["task", "open", "join", "link"],
-  open: ["send", "parse", "forward", "join", "link", "task"],
+  open: ["send", "continuous_request", "parse", "forward", "join", "link", "task"],
   send: ["parse", "forward", "open", "join", "link", "task"],
-  parse: ["forward", "resource_pool", "join", "open", "send", "link", "task"],
+  continuous_request: ["preview_catalog", "resource_catalog", "resource_pool", "forward", "open", "task"],
+  preview_catalog: ["resource_pool", "resource_catalog", "forward", "open", "task"],
+  parse: ["forward", "preview_catalog", "resource_catalog", "resource_pool", "join", "open", "send", "link", "task"],
+  resource_catalog: ["resource_pool", "forward", "open", "task"],
   join: ["open", "send", "parse", "link", "task"],
   link: ["join", "open", "send", "parse", "task"],
   forward: ["task"],
-  resource_pool: ["task"],
+  resource_pool: ["preview_catalog", "resource_catalog", "task"],
 };
 
-const API = import.meta.env.VITE_TG_WEB_API || "http://127.0.0.1:8765";
 const pagePaths: Record<Page, string> = {
   home: "/home",
   chat: "/chat",
   flow: "/flow",
   run: "/run",
+  resources: "/resources",
+  github: "/github",
+  bots: "/bots",
 };
 
 function pageFromPath(pathname: string): Page {
   if (pathname.startsWith("/chat")) return "chat";
   if (pathname.startsWith("/flow")) return "flow";
   if (pathname.startsWith("/run")) return "run";
+  if (pathname.startsWith("/resources")) return "resources";
+  if (pathname.startsWith("/github")) return "github";
+  if (pathname.startsWith("/bots")) return "bots";
   return "home";
 }
 
@@ -228,24 +292,84 @@ function createNode(type: string, position: { x: number; y: number }): Node {
       sendMode: "text",
       command: "",
       text: "签到",
+      requestMode: "button",
+      requestText: "随机获取资源",
+      repeatCount: 20,
+      intervalSeconds: 3,
+      responseWaitSeconds: 2,
+      responseLimit: 10,
+      maxFailures: 3,
+      linksSaveAs: "resource_records",
+      callbackPrefix: "unlock:",
       pattern: "签到成功|积分",
       parseMode: type === "parse" ? "after_send" : "match",
       extract: "messages",
-      saveAs: type === "parse" ? "last_parse" : "last_links",
+      saveAs: type === "continuous_request" ? "resource_responses" : type === "parse" ? "last_parse" : "last_links",
       regex: type === "parse",
       toPeer: "me",
-      poolPeer: "@your_pool_group",
+      poolPeer: type === "resource_pool" ? "" : "@your_pool_group",
       includePhotos: true,
       includeVideos: true,
       dedupe: true,
-      dedupeStore: "sessions/resource_pool_seen.sqlite3",
+      inputMode: ["preview_catalog", "resource_catalog", "resource_pool"].includes(type) ? "auto" : "",
+      dedupeStore:
+        type === "preview_catalog"
+          ? "sessions/resource_previews.sqlite3"
+          : type === "resource_catalog"
+            ? "sessions/resource_catalog.sqlite3"
+            : "sessions/resource_pool_seen.sqlite3",
       joinPool: true,
+      poolMode: "managed",
+      poolTitle: "HX 资源组",
+      poolOwnerAccountId: "",
+      poolCreatorAccountId: "",
+      poolGroupId: "",
       sourceMode: "manual",
-      source: "last_links",
+      source:
+        ["preview_catalog", "resource_pool"].includes(type)
+          ? "resource_responses"
+          : type === "resource_catalog"
+            ? "resource_records"
+            : type === "forward"
+              ? "last_parse"
+              : "last_links",
+      exportPath: type === "preview_catalog" ? "sessions/resource_previews.json" : "sessions/resource_links.json",
       target: "",
       url: "",
     },
   };
+}
+
+function findOpenNodePosition(origin: { x: number; y: number }, nodes: Node[]) {
+  const nodeWidth = 260;
+  const nodeHeight = 180;
+  const gap = 24;
+  const isOpen = (position: { x: number; y: number }) => nodes.every((node) => {
+    const width = node.measured?.width || node.width || nodeWidth;
+    const height = node.measured?.height || node.height || nodeHeight;
+    return (
+      position.x >= node.position.x + width + gap
+      || position.x + nodeWidth + gap <= node.position.x
+      || position.y >= node.position.y + height + gap
+      || position.y + nodeHeight + gap <= node.position.y
+    );
+  });
+  const offsets = [{ x: 0, y: 0 }];
+  for (let distance = 1; distance <= 6; distance += 1) {
+    offsets.push(
+      { x: 0, y: distance },
+      { x: -distance, y: 0 },
+      { x: distance, y: 0 },
+      { x: 0, y: -distance },
+      { x: -distance, y: distance },
+      { x: distance, y: distance },
+      { x: -distance, y: -distance },
+      { x: distance, y: -distance },
+    );
+  }
+  return offsets
+    .map(({ x, y }) => ({ x: origin.x + x * 300, y: origin.y + y * 220 }))
+    .find(isOpen) || origin;
 }
 
 function allowedTargets(sourceKind: string) {
@@ -295,11 +419,27 @@ function validateWorkflow(flow: Workflow): CompileIssue[] {
     if (kind === "open" && !String(data.peer || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "打开对话节点缺少 peer" });
     if (kind === "send" && String(data.sendMode || "text") !== "command" && !String(data.text || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "发送消息节点缺少文本" });
     if (kind === "send" && String(data.sendMode) === "command" && !String(data.command || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "发送消息节点缺少命令/按钮" });
+    if (kind === "continuous_request") {
+      for (const message of validateContinuousRequest(data)) {
+        issues.push({ level: "error", nodeId: node.id, message });
+      }
+    }
     if (kind === "parse" && !String(data.saveAs || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "解析节点缺少保存变量" });
     if (kind === "forward" && !String(data.toPeer || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "转发节点缺少目标会话" });
     if (kind === "resource_pool" && !String(data.poolPeer || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "资源池节点缺少群聊" });
     if (kind === "resource_pool" && !Boolean(data.includePhotos) && !Boolean(data.includeVideos)) issues.push({ level: "error", nodeId: node.id, message: "资源池节点至少选择图片或视频" });
     if (kind === "resource_pool" && Boolean(data.dedupe) && !String(data.dedupeStore || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "资源池节点缺少去重 DB 路径" });
+    if (kind === "resource_pool" && effectiveInputMode(data, "resource_pool") === "variable" && !String(data.source || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "资源池节点缺少来源变量" });
+    if (kind === "preview_catalog") {
+      for (const message of validatePreviewCatalog(data)) {
+        issues.push({ level: "error", nodeId: node.id, message });
+      }
+    }
+    if (kind === "resource_catalog") {
+      for (const message of validateResourceCatalog(data)) {
+        issues.push({ level: "error", nodeId: node.id, message });
+      }
+    }
     if (kind === "join" && String(data.sourceMode || "manual") === "variable" && !String(data.source || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "添加节点缺少来源变量" });
     if (kind === "join" && String(data.sourceMode || "manual") !== "variable" && !String(data.target || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "添加节点缺少链接或用户名" });
     if (kind === "link" && !String(data.url || "").trim()) issues.push({ level: "error", nodeId: node.id, message: "打开链接节点缺少链接" });
@@ -318,35 +458,6 @@ function validateWorkflow(flow: Workflow): CompileIssue[] {
     }
   }
   return issues;
-}
-
-async function apiGet<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`);
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function apiPost<T>(path: string, body: unknown): Promise<T> {
-  const response = await fetch(`${API}${path}`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify(body),
-  });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-async function apiDelete<T>(path: string): Promise<T> {
-  const response = await fetch(`${API}${path}`, { method: "DELETE" });
-  if (!response.ok) throw new Error(await response.text());
-  return response.json() as Promise<T>;
-}
-
-function Avatar({ account }: { account: Account }) {
-  if (account.avatar) {
-    return <img className="avatar" src={account.avatar} alt="" />;
-  }
-  return <div className="avatar fallback">{account.role === "main" ? "M" : "A"}</div>;
 }
 
 function NodeTextInput(props: {
@@ -404,6 +515,10 @@ function FlowNode({ data, selected }: NodeProps) {
           ? String(nodeData.sendMode) === "command"
             ? String(nodeData.command || "未选择命令/按钮")
             : String(nodeData.text || "")
+          : kind === "continuous_request"
+            ? `${String(nodeData.requestText || "未配置")} · ${Number(nodeData.repeatCount || 0)} 次 / ${Number(nodeData.intervalSeconds || 0)} 秒`
+          : kind === "preview_catalog"
+            ? String(nodeData.exportPath || "")
           : kind === "parse"
             ? parseMode === "after_send"
               ? `发送后的消息 -> ${String(nodeData.saveAs || "last_parse")}`
@@ -412,6 +527,8 @@ function FlowNode({ data, selected }: NodeProps) {
               ? String(nodeData.toPeer || "")
               : kind === "resource_pool"
                 ? String(nodeData.poolPeer || "")
+              : kind === "resource_catalog"
+                ? String(nodeData.exportPath || "")
               : kind === "join"
                 ? String(nodeData.sourceMode) === "variable" ? String(nodeData.source || "") : String(nodeData.target || "")
               : String(nodeData.url || "");
@@ -467,6 +584,16 @@ function FlowNode({ data, selected }: NodeProps) {
             <NodeTextInput multiline value={String(nodeData.text || "")} onCommit={(value) => emitText("text", value)} />
           )
         ) : null}
+        {kind === "continuous_request" ? (
+          <>
+            <NodeTextInput value={String(nodeData.requestText || "")} onCommit={(value) => emitText("requestText", value)} />
+            <div className="continuous-request-inline">
+              <span>{Number(nodeData.repeatCount || 0)} 次</span>
+              <span>{Number(nodeData.intervalSeconds || 0)} 秒</span>
+            </div>
+          </>
+        ) : null}
+        {kind === "preview_catalog" ? <NodeTextInput value={String(nodeData.exportPath || "")} onCommit={(value) => emitText("exportPath", value)} /> : null}
         {kind === "parse" ? (
           <>
             {parseMode === "after_send" ? (
@@ -497,6 +624,7 @@ function FlowNode({ data, selected }: NodeProps) {
         ) : null}
         {kind === "forward" ? <NodeTextInput value={String(nodeData.toPeer || "")} onCommit={(value) => emitText("toPeer", value)} /> : null}
         {kind === "resource_pool" ? <NodeTextInput value={String(nodeData.poolPeer || "")} onCommit={(value) => emitText("poolPeer", value)} /> : null}
+        {kind === "resource_catalog" ? <NodeTextInput value={String(nodeData.exportPath || "")} onCommit={(value) => emitText("exportPath", value)} /> : null}
         {kind === "join" ? <NodeTextInput value={String(nodeData.sourceMode) === "variable" ? String(nodeData.source || "") : String(nodeData.target || "")} onCommit={(value) => emitText(String(nodeData.sourceMode) === "variable" ? "source" : "target", value)} /> : null}
         {kind === "link" ? <NodeTextInput value={String(nodeData.url || "")} onCommit={(value) => emitText("url", value)} /> : null}
       </div> : null}
@@ -508,6 +636,8 @@ function FlowNode({ data, selected }: NodeProps) {
 const nodeTypes = { default: FlowNode };
 
 function NodeIcon({ icon }: { icon: string }) {
+  if (icon === "repeat") return <Repeat2 aria-hidden="true" />;
+  if (icon === "catalog") return <ListChecks aria-hidden="true" />;
   if (icon === "task") return <svg viewBox="0 0 24 24"><path d="M5 4h14v16H5V4Zm3 4v2h8V8H8Zm0 4v2h8v-2H8Zm0 4v2h5v-2H8Z" /></svg>;
   if (icon === "send") return <svg viewBox="0 0 24 24"><path d="M3 11.5 20.5 3 17 21l-5.2-6-5.8 4 2.4-6.8L3 11.5Z" /></svg>;
   if (icon === "filter") return <svg viewBox="0 0 24 24"><path d="M4 5h16l-6.2 7.1V19l-3.6-1.8v-5.1L4 5Z" /></svg>;
@@ -592,11 +722,28 @@ function HighlightText({ text, ranges }: { text: string; ranges: Array<[number, 
   );
 }
 
-function Field(props: { label: string; value: string | number | boolean; onChange: (value: string) => void; type?: string }) {
+function Field(props: {
+  label: string;
+  value: string | number | boolean;
+  onChange: (value: string) => void;
+  type?: string;
+  min?: number;
+  max?: number;
+  step?: number;
+  disabled?: boolean;
+}) {
   return (
     <label className="field">
       <span>{props.label}</span>
-      <input type={props.type || "text"} value={String(props.value)} onChange={(event) => props.onChange(event.target.value)} />
+      <input
+        type={props.type || "text"}
+        value={String(props.value)}
+        min={props.min}
+        max={props.max}
+        step={props.step}
+        disabled={props.disabled}
+        onChange={(event) => props.onChange(event.target.value)}
+      />
     </label>
   );
 }
@@ -610,35 +757,22 @@ function TextArea(props: { label: string; value: string; onChange: (value: strin
   );
 }
 
-function SelectField(props: { label: string; value: string; onChange: (value: string) => void; options: Array<{ value: string; label: string }> }) {
+function SelectField(props: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  options: Array<{ value: string; label: string }>;
+  disabled?: boolean;
+}) {
   return (
     <label className="field">
       <span>{props.label}</span>
-      <select value={props.value} onChange={(event) => props.onChange(event.target.value)}>
+      <select value={props.value} disabled={props.disabled} onChange={(event) => props.onChange(event.target.value)}>
         {props.options.map((option) => (
           <option key={option.value} value={option.value}>{option.label}</option>
         ))}
       </select>
     </label>
-  );
-}
-
-function AccountList({ accounts, role }: { accounts: Account[]; role: Role }) {
-  const filtered = accounts.filter((account) => account.role === role);
-  return (
-    <div className="account-list">
-      {filtered.length === 0 ? <div className="empty">暂无账号</div> : null}
-      {filtered.map((account) => (
-        <article className="account" key={account.id}>
-          <Avatar account={account} />
-          <div>
-            <b>{account.name}</b>
-            <span>{account.username || account.telegram_id || account.masked_session}</span>
-            <code>{account.source}</code>
-          </div>
-        </article>
-      ))}
-    </div>
   );
 }
 
@@ -649,22 +783,36 @@ function formatMessageTime(value: string) {
   return date.toLocaleString("zh-CN", { month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit" });
 }
 
+function DialogAvatar({ dialog }: { dialog: Dialog }) {
+  if (dialog.avatar) return <img className="dialog-avatar" src={dialog.avatar} alt="" />;
+  const initial = Array.from(dialog.title.trim())[0]?.toUpperCase() || (dialog.is_group ? "群" : "聊");
+  return <div className={dialog.is_group ? "dialog-avatar fallback group" : "dialog-avatar fallback"}>{initial}</div>;
+}
+
+function dialogTypeLabel(dialog: Dialog) {
+  if (dialog.is_group) return dialog.type === "Channel" ? "频道 / 超级群" : "群聊";
+  if (dialog.type === "User") return "私聊";
+  return dialog.type || "对话";
+}
+
 function ChatDebugger(props: {
   accounts: Account[];
   proxy: string;
   onRefreshAccounts: () => void;
+  focus: ChatFocus | null;
 }) {
   const [accountId, setAccountId] = useState("");
   const [dialogs, setDialogs] = useState<Dialog[]>([]);
   const [selectedPeer, setSelectedPeer] = useState("");
   const [selectedTitle, setSelectedTitle] = useState("");
-  const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const [messages, setMessages] = useState<TelegramMessage[]>([]);
   const [dialogQuery, setDialogQuery] = useState("");
   const [draft, setDraft] = useState("");
   const [botCommands, setBotCommands] = useState<BotCommand[]>([]);
   const [loadingDialogs, setLoadingDialogs] = useState(false);
   const [loadingMessages, setLoadingMessages] = useState(false);
   const [error, setError] = useState("");
+  const [focusedMessageId, setFocusedMessageId] = useState<number | null>(null);
   const messageListRef = useRef<HTMLDivElement | null>(null);
 
   const selectedAccount = useMemo(() => props.accounts.find((account) => account.id === accountId), [accountId, props.accounts]);
@@ -675,6 +823,16 @@ function ChatDebugger(props: {
       setAccountId((main || props.accounts[0]).id);
     }
   }, [accountId, props.accounts]);
+
+  useEffect(() => {
+    if (!props.focus) return;
+    setAccountId(props.focus.accountId);
+    setSelectedPeer(props.focus.peer);
+    setSelectedTitle(props.focus.peer);
+    setFocusedMessageId(props.focus.messageId);
+    setMessages([]);
+    setBotCommands([]);
+  }, [props.focus]);
 
   const loadDialogs = useCallback(async () => {
     if (!accountId) return;
@@ -701,16 +859,19 @@ function ChatDebugger(props: {
     setLoadingMessages(true);
     setError("");
     try {
-      const payload = await apiGet<{ messages: ChatMessage[] }>(
-        `/api/messages?account=${encodeURIComponent(accountId)}&peer=${encodeURIComponent(selectedPeer)}&proxy=${encodeURIComponent(props.proxy)}&limit=80`,
+      const payload = await apiGet<{ messages: TelegramMessage[] }>(
+        `/api/messages?account=${encodeURIComponent(accountId)}&peer=${encodeURIComponent(selectedPeer)}&proxy=${encodeURIComponent(props.proxy)}&limit=80${focusedMessageId ? `&message_id=${focusedMessageId}` : ""}`,
       );
       setMessages(payload.messages);
+      if (focusedMessageId && !payload.messages.some((message) => Number(message.id) === focusedMessageId)) {
+        setError(`没有读取到消息 #${focusedMessageId}，它可能已被删除或当前账号无权访问。`);
+      }
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "加载消息失败");
     } finally {
       setLoadingMessages(false);
     }
-  }, [accountId, props.proxy, selectedPeer]);
+  }, [accountId, focusedMessageId, props.proxy, selectedPeer]);
 
   const loadBotCommands = useCallback(async () => {
     if (!accountId || !selectedPeer) {
@@ -742,9 +903,13 @@ function ChatDebugger(props: {
   useEffect(() => {
     const element = messageListRef.current;
     if (element) {
-      element.scrollTop = element.scrollHeight;
+      const focused = focusedMessageId
+        ? element.querySelector<HTMLElement>(`[data-message-id="${focusedMessageId}"]`)
+        : null;
+      if (focused) focused.scrollIntoView({ block: "center" });
+      else element.scrollTop = element.scrollHeight;
     }
-  }, [messages, selectedPeer]);
+  }, [focusedMessageId, messages, selectedPeer]);
 
   async function sendMessage(textOverride?: string) {
     const text = (textOverride ?? draft).trim();
@@ -752,7 +917,7 @@ function ChatDebugger(props: {
     setDraft("");
     setError("");
     try {
-      const payload = await apiPost<{ message: ChatMessage }>("/api/messages/send", {
+      const payload = await apiPost<{ message: TelegramMessage }>("/api/messages/send", {
         account: accountId,
         peer: selectedPeer,
         text,
@@ -785,9 +950,10 @@ function ChatDebugger(props: {
                 setSelectedTitle("");
                 setMessages([]);
                 setBotCommands([]);
+                setFocusedMessageId(null);
               }}
             >
-              <Avatar account={account} />
+              <AccountAvatar account={account} />
               <span>
                 <b>{account.name}</b>
                 <small>{account.username || account.telegram_id || account.masked_session}</small>
@@ -812,14 +978,18 @@ function ChatDebugger(props: {
               onClick={() => {
                 setSelectedPeer(dialog.id);
                 setSelectedTitle(dialog.title);
+                setFocusedMessageId(null);
               }}
             >
-              <span>
-                <b>{dialog.title}</b>
-                <small>{dialog.username || dialog.type}</small>
+              <DialogAvatar dialog={dialog} />
+              <span className="dialog-copy">
+                <span className="dialog-title-row">
+                  <b title={dialog.title}>{dialog.title}</b>
+                  {dialog.unread_count ? <i aria-label={`${dialog.unread_count} 条未读消息`} title={`${dialog.unread_count} 条未读消息`}>{dialog.unread_count > 99 ? "99+" : dialog.unread_count}</i> : null}
+                </span>
+                <small>{dialogTypeLabel(dialog)}{dialog.username ? ` · ${dialog.username}` : ""}</small>
+                <p title={dialog.last_message || "无文本消息"}>{dialog.last_message || "无文本消息"}</p>
               </span>
-              {dialog.unread_count ? <i>{dialog.unread_count}</i> : null}
-              <p>{dialog.last_message || "无文本消息"}</p>
             </button>
           ))}
         </div>
@@ -837,10 +1007,14 @@ function ChatDebugger(props: {
         <div className="message-list" ref={messageListRef}>
           {messages.length === 0 ? <div className="empty">{selectedPeer ? "暂无消息" : "选择对话后查看消息"}</div> : null}
           {messages.map((message) => (
-            <article className={message.out ? "message-bubble outgoing" : "message-bubble incoming"} key={message.id}>
+            <article
+              className={`${message.out ? "message-bubble outgoing" : "message-bubble incoming"}${Number(message.id) === focusedMessageId ? " focused" : ""}`}
+              data-message-id={message.id}
+              key={message.id}
+            >
               {!message.out && message.sender ? <strong>{message.sender}</strong> : null}
-              <p>{message.text || "[空消息]"}</p>
-              <time>{formatMessageTime(message.date)}</time>
+              <TelegramMessageContent message={message} />
+              <time>{Number(message.id) === focusedMessageId ? `已定位 · #${message.id} · ` : ""}{formatMessageTime(message.date)}</time>
             </article>
           ))}
         </div>
@@ -888,23 +1062,39 @@ function NodeEditor({
   botCommands,
   commandPeer,
   commandStatus,
+  commandLoading,
+  onReloadCommands,
   dialogs,
   dialogsStatus,
   onLoadDialogs,
+  accounts,
+  inferredInputSource,
+  resourceGroupJob,
+  onSyncResourceGroup,
 }: {
   node?: Node;
   updateNode: (id: string, data: Record<string, unknown>) => void;
   botCommands?: BotCommand[];
   commandPeer?: string;
   commandStatus?: string;
+  commandLoading?: boolean;
+  onReloadCommands?: () => void;
   dialogs?: Dialog[];
   dialogsStatus?: string;
   onLoadDialogs?: () => void;
+  accounts?: Account[];
+  inferredInputSource?: string;
+  resourceGroupJob?: ResourceGroupJob | null;
+  onSyncResourceGroup?: (node: Node) => void;
 }) {
   if (!node) return <div className="empty">选择一个节点进行配置</div>;
   const data = node.data as Record<string, unknown>;
   const kind = String(data.kind || "task");
   const parseMode = String(data.parseMode || "match");
+  const inputKind = kind === "preview_catalog" || kind === "resource_catalog" || kind === "resource_pool" ? kind : null;
+  const inputMode = inputKind ? effectiveInputMode(data, inputKind) : "auto";
+  const poolOwnerAccountId = String(data.poolOwnerAccountId || accounts?.find((account) => account.role === "main")?.id || accounts?.[0]?.id || "");
+  const reusesManagedGroup = Boolean(data.poolGroupId) && String(data.poolCreatorAccountId || data.poolOwnerAccountId || "") === poolOwnerAccountId;
   const set = (key: string, value: string) => updateNode(node.id, { [key]: value });
   return (
     <div className="node-editor">
@@ -973,19 +1163,121 @@ function NodeEditor({
             <div className="node-context-hint">未连接到打开对话节点</div>
           )}
           {String(data.sendMode || "text") === "command" ? (
-            botCommands?.length ? (
-              <SelectField
-                label="Bot 命令/按钮"
-                value={String(data.command || botCommands[0]?.command || "")}
-                onChange={(value) => updateNode(node.id, { command: value })}
-                options={botCommands.map((item) => ({ value: item.command, label: `${item.command}${item.description ? ` - ${item.description}` : ""}` }))}
-              />
-            ) : (
-              <Field label="Bot 命令/按钮" value={String(data.command || "")} onChange={(value) => set("command", value)} />
-            )
+            <>
+              {botCommands?.length ? (
+                <SelectField
+                  label="Bot 命令/按钮"
+                  value={String(data.command || "")}
+                  onChange={(value) => updateNode(node.id, { command: value })}
+                  options={[
+                    { value: "", label: "选择命令/按钮" },
+                    ...(
+                      data.command && !botCommands.some((item) => item.command === String(data.command))
+                        ? [{ value: String(data.command), label: `${String(data.command)} - 当前值` }]
+                        : []
+                    ),
+                    ...botCommands.map((item) => ({ value: item.command, label: `${item.command}${item.description ? ` - ${item.description}` : ""}` })),
+                  ]}
+                />
+              ) : (
+                <Field label="Bot 命令/按钮" value={String(data.command || "")} onChange={(value) => set("command", value)} />
+              )}
+              <div className="node-inline-actions">
+                <button onClick={onReloadCommands} disabled={!onReloadCommands || commandLoading}>
+                  <RefreshCw className={commandLoading ? "spin" : ""} aria-hidden="true" />
+                  {commandLoading ? "正在读取" : "重新读取"}
+                </button>
+              </div>
+            </>
           ) : (
             <TextArea label="消息内容" value={String(data.text || "")} onChange={(value) => set("text", value)} />
           )}
+        </>
+      ) : null}
+      {kind === "continuous_request" ? (
+        <>
+          <SelectField
+            label="请求方式"
+            value={String(data.requestMode || "button")}
+            onChange={(value) => updateNode(node.id, { requestMode: value })}
+            options={[
+              { value: "button", label: "点击机器人按钮" },
+              { value: "message", label: "发送文本或命令" },
+            ]}
+          />
+          <Field
+            label={String(data.requestMode || "button") === "button" ? "按钮文字" : "消息 / 命令"}
+            value={String(data.requestText || "")}
+            onChange={(value) => set("requestText", value)}
+          />
+          <Field
+            label="重复次数"
+            type="number"
+            min={CONTINUOUS_REQUEST_LIMITS.repeatCount.min}
+            max={CONTINUOUS_REQUEST_LIMITS.repeatCount.max}
+            step={1}
+            value={Number(data.repeatCount ?? 20)}
+            onChange={(value) => updateNode(node.id, { repeatCount: Number(value) })}
+          />
+          <Field
+            label="固定间隔（秒）"
+            type="number"
+            min={CONTINUOUS_REQUEST_LIMITS.intervalSeconds.min}
+            max={CONTINUOUS_REQUEST_LIMITS.intervalSeconds.max}
+            step={0.5}
+            value={Number(data.intervalSeconds ?? 3)}
+            onChange={(value) => updateNode(node.id, { intervalSeconds: Number(value) })}
+          />
+          <Field
+            label="每轮回执等待（秒）"
+            type="number"
+            min={CONTINUOUS_REQUEST_LIMITS.responseWaitSeconds.min}
+            max={CONTINUOUS_REQUEST_LIMITS.responseWaitSeconds.max}
+            step={0.5}
+            value={Number(data.responseWaitSeconds ?? 2)}
+            onChange={(value) => updateNode(node.id, { responseWaitSeconds: Number(value) })}
+          />
+          <Field
+            label="每轮最多读取"
+            type="number"
+            min={CONTINUOUS_REQUEST_LIMITS.responseLimit.min}
+            max={CONTINUOUS_REQUEST_LIMITS.responseLimit.max}
+            step={1}
+            value={Number(data.responseLimit ?? 10)}
+            onChange={(value) => updateNode(node.id, { responseLimit: Number(value) })}
+          />
+          <Field
+            label="失败阈值"
+            type="number"
+            min={CONTINUOUS_REQUEST_LIMITS.maxFailures.min}
+            max={CONTINUOUS_REQUEST_LIMITS.maxFailures.max}
+            step={1}
+            value={Number(data.maxFailures ?? 3)}
+            onChange={(value) => updateNode(node.id, { maxFailures: Number(value) })}
+          />
+          <Field label="回执变量" value={String(data.saveAs || "resource_responses")} onChange={(value) => set("saveAs", value)} />
+          <Field label="资源变量" value={String(data.linksSaveAs || "resource_records")} onChange={(value) => set("linksSaveAs", value)} />
+          <div className="node-context-hint strong">总请求数 = 执行账号数 × 重复次数</div>
+        </>
+      ) : null}
+      {kind === "preview_catalog" ? (
+        <>
+          <SelectField
+            label="预览入口"
+            value={inputMode}
+            onChange={(value) => updateNode(node.id, { inputMode: value })}
+            options={[
+              { value: "auto", label: `上游节点输出（${inferredInputSource || "resource_responses"}）` },
+              { value: "variable", label: "自定义变量" },
+            ]}
+          />
+          {inputMode === "variable" ? (
+            <Field label="来源变量" value={String(data.source || "resource_responses")} onChange={(value) => set("source", value)} />
+          ) : null}
+          <Field label="按钮索引前缀" value={String(data.callbackPrefix || "unlock:")} onChange={(value) => set("callbackPrefix", value)} />
+          <Field label="预览去重 DB" value={String(data.dedupeStore || "sessions/resource_previews.sqlite3")} onChange={(value) => set("dedupeStore", value)} />
+          <Field label="预览清单 JSON" value={String(data.exportPath || "sessions/resource_previews.json")} onChange={(value) => set("exportPath", value)} />
+          <div className="node-context-hint strong">只读取按钮索引，不触发按钮回调</div>
         </>
       ) : null}
       {kind === "parse" ? (
@@ -1051,8 +1343,57 @@ function NodeEditor({
       ) : null}
       {kind === "resource_pool" ? (
         <>
-          <Field label="资源池群聊" value={String(data.poolPeer || "")} onChange={(value) => set("poolPeer", value)} />
-          <Field label="来源变量" value={String(data.source || "last_parse")} onChange={(value) => set("source", value)} />
+          <SelectField
+            label="资源组方式"
+            value={String(data.poolMode || "managed")}
+            onChange={(value) => updateNode(node.id, { poolMode: value })}
+            options={[
+              { value: "managed", label: "自动创建并同步账号" },
+              { value: "existing", label: "使用已有群组" },
+            ]}
+          />
+          {String(data.poolMode || "managed") === "managed" ? (
+            <>
+              <Field label="资源组名称" value={String(data.poolTitle || "HX 资源组")} onChange={(value) => set("poolTitle", value)} />
+              <SelectField
+                label="群主账号"
+                value={poolOwnerAccountId}
+                onChange={(value) => updateNode(node.id, { poolOwnerAccountId: value })}
+                options={(accounts || []).map((account) => ({ value: account.id, label: `${account.role === "main" ? "主账号" : "小号"} · ${account.name}` }))}
+              />
+              <div className="resource-group-status">
+                <span>账号 {resourceGroupJob?.completed || 0}/{resourceGroupJob?.total || accounts?.length || 0}</span>
+                <span>新加入 {resourceGroupJob?.joined || 0}</span>
+                <span>已在群内 {resourceGroupJob?.already || 0}</span>
+                <span>失败 {resourceGroupJob?.failed || 0}</span>
+              </div>
+              <div className="node-inline-actions">
+                <button
+                  onClick={() => onSyncResourceGroup?.(node)}
+                  disabled={!onSyncResourceGroup || resourceGroupJob?.status === "running"}
+                >
+                  <Users aria-hidden="true" />
+                  {resourceGroupJob?.status === "running" ? "正在同步" : reusesManagedGroup ? "同步缺失账号" : "创建并同步"}
+                </button>
+              </div>
+              {resourceGroupJob?.error ? <div className="node-context-hint error">{resourceGroupJob.error}</div> : null}
+              {data.poolGroupId ? <div className="node-context-hint strong">已绑定资源组 {String(data.poolGroupId)}</div> : null}
+            </>
+          ) : (
+            <Field label="已有群组 / 邀请链接" value={String(data.poolPeer || "")} onChange={(value) => set("poolPeer", value)} />
+          )}
+          <SelectField
+            label="媒体入口"
+            value={inputMode}
+            onChange={(value) => updateNode(node.id, { inputMode: value })}
+            options={[
+              { value: "auto", label: `上游节点输出（${inferredInputSource || "last_parse"}）` },
+              { value: "variable", label: "自定义变量" },
+            ]}
+          />
+          {inputMode === "variable" ? (
+            <Field label="来源变量" value={String(data.source || "last_parse")} onChange={(value) => set("source", value)} />
+          ) : null}
           <label className="switch inline">
             <input
               type="checkbox"
@@ -1091,6 +1432,25 @@ function NodeEditor({
           <div className="node-context-hint">GitHub Actions 里可用 TG_RESOURCE_POOL_DB 覆盖路径，并用 actions/cache 持久化。</div>
         </>
       ) : null}
+      {kind === "resource_catalog" ? (
+        <>
+          <SelectField
+            label="链接入口"
+            value={inputMode}
+            onChange={(value) => updateNode(node.id, { inputMode: value })}
+            options={[
+              { value: "auto", label: `上游节点输出（${inferredInputSource || "resource_records"}）` },
+              { value: "variable", label: "自定义变量" },
+            ]}
+          />
+          {inputMode === "variable" ? (
+            <Field label="来源变量" value={String(data.source || "resource_records")} onChange={(value) => set("source", value)} />
+          ) : null}
+          <Field label="去重 DB 路径" value={String(data.dedupeStore || "sessions/resource_catalog.sqlite3")} onChange={(value) => set("dedupeStore", value)} />
+          <Field label="资源清单 JSON" value={String(data.exportPath || "sessions/resource_links.json")} onChange={(value) => set("exportPath", value)} />
+          <div className="node-context-hint">唯一链接保留首次来源；重复命中会累计次数，并在运行结果中合并显示。</div>
+        </>
+      ) : null}
       {kind === "join" ? (
         <>
           <SelectField
@@ -1117,9 +1477,11 @@ function NodeEditor({
 function WorkflowApp() {
   const { screenToFlowPosition, getViewport } = useReactFlow();
   const [page, setPageState] = useState<Page>(() => pageFromPath(window.location.pathname));
+  const [chatFocus, setChatFocus] = useState<ChatFocus | null>(() => chatFocusFromLocation());
   const [accounts, setAccounts] = useState<Account[]>([]);
   const [qrJob, setQrJob] = useState<QrJob | null>(null);
   const [qrOpen, setQrOpen] = useState(false);
+  const [twoFactorPassword, setTwoFactorPassword] = useState("");
   const [proxy, setProxyState] = useState(() => localStorage.getItem("tg.proxy") || "http://127.0.0.1:2334");
   const [nodes, setNodes] = useState<Node[]>(initialNodes);
   const [edges, setEdges] = useState<Edge[]>(initialEdges);
@@ -1133,13 +1495,34 @@ function WorkflowApp() {
   const [applyStatus, setApplyStatus] = useState("未应用到仓库");
   const [compileIssues, setCompileIssues] = useState<CompileIssue[]>([]);
   const [runJob, setRunJob] = useState<RunJob | null>(null);
+  const [runStartPending, setRunStartPending] = useState(false);
+  const [runCancelPending, setRunCancelPending] = useState(false);
+  const [runControlError, setRunControlError] = useState("");
+  const [runAccountScope, setRunAccountScope] = useState<RunAccountScope>(() => {
+    const saved = localStorage.getItem("tg.runAccountScope");
+    return saved === "alts" ? "alts" : "all";
+  });
   const [accountLimit, setAccountLimit] = useState(() => Number(localStorage.getItem("tg.accountLimit") || "0"));
   const [accountLimitSavedAt, setAccountLimitSavedAt] = useState(() => (localStorage.getItem("tg.accountLimit") ? "已加载上次设置" : "0 表示全部账号"));
+  const [accountConcurrency, setAccountConcurrency] = useState(() => {
+    const saved = Number(localStorage.getItem("tg.accountConcurrency") || "1");
+    return Number.isFinite(saved) ? Math.min(MAX_ACCOUNT_CONCURRENCY, Math.max(1, saved)) : 1;
+  });
   const [flowBotCommands, setFlowBotCommands] = useState<BotCommand[]>([]);
   const [flowCommandStatus, setFlowCommandStatus] = useState("");
+  const [flowCommandLoading, setFlowCommandLoading] = useState(false);
+  const [flowCommandReload, setFlowCommandReload] = useState(0);
   const [flowAccountId, setFlowAccountId] = useState(() => localStorage.getItem("tg.flowAccountId") || "");
   const [flowDialogs, setFlowDialogs] = useState<Dialog[]>([]);
   const [flowDialogsStatus, setFlowDialogsStatus] = useState("读取当前账号对话");
+  const [resourceGroupJob, setResourceGroupJob] = useState<ResourceGroupJob | null>(null);
+  const [resourceGroupNodeId, setResourceGroupNodeId] = useState("");
+  const [resourcePreviews, setResourcePreviews] = useState<ResourcePreview[]>([]);
+  const [resourcePreviewFiles, setResourcePreviewFiles] = useState<ResourcePreviewFile[]>([]);
+  const [selectedResourcePreviewFile, setSelectedResourcePreviewFile] = useState(() => localStorage.getItem("tg.resourcePreviewFile") || "");
+  const [resourcePreviewsPath, setResourcePreviewsPath] = useState("");
+  const [resourcePreviewsUpdatedAt, setResourcePreviewsUpdatedAt] = useState<number | null>(null);
+  const [resourcePreviewsStatus, setResourcePreviewsStatus] = useState("尚未读取");
   const [contextMenu, setContextMenu] = useState<
     | { kind: "node"; x: number; y: number; nodeId: string }
     | { kind: "edge"; x: number; y: number; edgeId: string }
@@ -1152,6 +1535,11 @@ function WorkflowApp() {
   const connectingNodeId = useRef<string | null>(null);
   const suppressNextPaneClick = useRef(false);
   const runOutputRef = useRef<HTMLPreElement | null>(null);
+  const runStreamRef = useRef<EventSource | null>(null);
+  const runStartPendingRef = useRef(false);
+  const runCancelPendingRef = useRef(false);
+  const resourceGroupPollRef = useRef<number | null>(null);
+  const selectedResourcePreviewFileRef = useRef(selectedResourcePreviewFile);
 
   const selectedNode = useMemo(() => nodes.find((node) => node.id === selectedNodeId), [nodes, selectedNodeId]);
   const currentWorkflow = useMemo<Workflow>(
@@ -1181,7 +1569,16 @@ function WorkflowApp() {
     }
     return "";
   }, [edges, nodes, selectedNode]);
-
+  const selectedSendMode = String((selectedNode?.data as Record<string, unknown> | undefined)?.sendMode || "text");
+  const selectedInputSource = useMemo(() => {
+    if (!selectedNode) return "";
+    const kind = String((selectedNode.data as Record<string, unknown>).kind || "");
+    if (kind !== "preview_catalog" && kind !== "resource_catalog" && kind !== "resource_pool") return "";
+    return inferUpstreamInput(selectedNode.id, kind, nodes, edges);
+  }, [edges, nodes, selectedNode]);
+  const runIsActive = isRunActiveStatus(runJob?.status);
+  const runIsCancelling = runCancelPending || runJob?.status === "cancelling";
+  const runControlsLocked = runStartPending || runCancelPending || runIsActive;
   const setPage = useCallback((next: Page) => {
     setPageState(next);
     const path = pagePaths[next];
@@ -1201,10 +1598,42 @@ function WorkflowApp() {
     setWorkflows(payload.workflows);
   }, []);
 
+  const loadResourcePreviews = useCallback(async (path = "") => {
+    setResourcePreviewsStatus("读取中");
+    try {
+      let payload: ResourcePreviewsPayload;
+      try {
+        payload = await apiGet<ResourcePreviewsPayload>(
+          `/api/resource-previews${path ? `?path=${encodeURIComponent(path)}` : ""}`,
+        );
+      } catch (error) {
+        if (!path || !(error instanceof ApiError) || !error.message.includes("不在允许的文件列表中")) {
+          throw error;
+        }
+        payload = await apiGet<ResourcePreviewsPayload>("/api/resource-previews");
+      }
+      setResourcePreviews(payload.previews);
+      setResourcePreviewFiles(payload.files);
+      setSelectedResourcePreviewFile(payload.selected_path);
+      selectedResourcePreviewFileRef.current = payload.selected_path;
+      localStorage.setItem("tg.resourcePreviewFile", payload.selected_path);
+      setResourcePreviewsPath(payload.path);
+      setResourcePreviewsUpdatedAt(payload.updated_at || null);
+      setResourcePreviewsStatus(payload.previews.length ? `已读取 ${payload.previews.length} 个预览` : "暂无资源预览索引");
+    } catch (error) {
+      setResourcePreviews([]);
+      setResourcePreviewsStatus(error instanceof Error ? error.message : "资源预览读取失败");
+    }
+  }, []);
+
   useEffect(() => {
     void loadAccounts();
     void loadWorkflows();
   }, [loadAccounts, loadWorkflows]);
+
+  useEffect(() => {
+    if (page === "resources") void loadResourcePreviews(selectedResourcePreviewFileRef.current);
+  }, [loadResourcePreviews, page]);
 
   useEffect(() => {
     if (!flowAccountId && accounts.length) {
@@ -1215,12 +1644,31 @@ function WorkflowApp() {
   }, [accounts, flowAccountId]);
 
   useEffect(() => {
-    const onPopState = () => setPageState(pageFromPath(window.location.pathname));
+    const onPopState = () => {
+      setPageState(pageFromPath(window.location.pathname));
+      setChatFocus(chatFocusFromLocation());
+    };
     window.addEventListener("popstate", onPopState);
     if (window.location.pathname === "/") {
       window.history.replaceState({ page: "home" }, "", "/home");
     }
     return () => window.removeEventListener("popstate", onPopState);
+  }, []);
+
+  const locateResourceMessage = useCallback((occurrence: ResourcePreviewOccurrence, messageId: number) => {
+    const accountId = String(occurrence.account_id || "");
+    const peer = String(occurrence.source_peer || "");
+    if (!accountId || !peer || !messageId) return;
+    const focus: ChatFocus = {
+      accountId,
+      peer,
+      messageId,
+      token: `${accountId}:${peer}:${messageId}:${Date.now()}`,
+    };
+    setChatFocus(focus);
+    setPageState("chat");
+    const params = new URLSearchParams({ account: accountId, peer, message: String(messageId) });
+    window.history.pushState({ page: "chat" }, "", `/chat?${params.toString()}`);
   }, []);
 
   useEffect(() => {
@@ -1293,42 +1741,107 @@ function WorkflowApp() {
 
   useEffect(() => {
     const commandAccount = flowAccount;
-    if (!commandAccount || !selectedSendPeer || String((selectedNode?.data as Record<string, unknown> | undefined)?.kind || "") !== "send") {
+    if (!commandAccount || !selectedSendPeer || selectedSendMode !== "command") {
       setFlowBotCommands([]);
       setFlowCommandStatus(!commandAccount ? "没有可用于读取命令的账号" : "");
+      setFlowCommandLoading(false);
       return;
     }
-    let cancelled = false;
+    const controller = new AbortController();
+    let active = true;
+    const timeout = window.setTimeout(() => controller.abort(), 15000);
+    setFlowCommandLoading(true);
     setFlowCommandStatus(`正在用 ${commandAccount.name} 读取命令`);
     apiGet<BotCommandPayload>(
       `/api/bot/commands?account=${encodeURIComponent(commandAccount.id)}&peer=${encodeURIComponent(selectedSendPeer)}&proxy=${encodeURIComponent(proxy)}`,
+      { signal: controller.signal },
     )
       .then((payload) => {
-        if (!cancelled) {
+        if (active && !controller.signal.aborted) {
           setFlowBotCommands(payload.commands);
-          setFlowCommandStatus(
+          if (payload.commands.length) {
+            setNodes((items) =>
+              items.map((node) => {
+                if (node.id !== selectedNodeId) return node;
+                const data = node.data as Record<string, unknown>;
+                const command = resolveCommandAfterLoad(data.command, payload.commands);
+                return command === String(data.command || "")
+                  ? node
+                  : { ...node, data: { ...node.data, nodeId: node.id, command } };
+              }),
+            );
+          }
+          const status = (
             payload.commands.length
               ? `已读取 ${payload.commands.length} 个命令/按钮（${payload.source === "history" ? "历史消息" : payload.source === "keyboard" ? "键盘按钮" : "官方菜单"}）`
               : payload.is_bot === false
                 ? "当前对话不是 bot"
-                : "该 bot 没有公开命令/键盘按钮，也未在最近消息中发现 /xxx",
+                : "该 bot 没有公开命令/键盘按钮，也未在最近消息中发现 /xxx"
           );
+          setFlowCommandStatus(payload.partial && payload.warning ? `${status}；${payload.warning}` : status);
         }
       })
       .catch((error) => {
-        if (!cancelled) setFlowBotCommands([]);
-        if (!cancelled) setFlowCommandStatus(error instanceof Error ? error.message : "命令读取失败");
+        if (!active) return;
+        setFlowBotCommands([]);
+        setFlowCommandStatus(
+          controller.signal.aborted
+            ? "命令读取超时，请检查代理后重试"
+            : error instanceof Error ? error.message : "命令读取失败",
+        );
+      })
+      .finally(() => {
+        window.clearTimeout(timeout);
+        if (active) setFlowCommandLoading(false);
       });
     return () => {
-      cancelled = true;
+      active = false;
+      window.clearTimeout(timeout);
+      controller.abort();
     };
-  }, [flowAccount, proxy, selectedNode, selectedSendPeer]);
+  }, [flowAccount, flowCommandReload, proxy, selectedNodeId, selectedSendMode, selectedSendPeer]);
+
+  useEffect(() => () => {
+    if (resourceGroupPollRef.current !== null) window.clearTimeout(resourceGroupPollRef.current);
+    runStreamRef.current?.close();
+    runStreamRef.current = null;
+  }, []);
+
+  useEffect(() => {
+    const jobId = localStorage.getItem(ACTIVE_RUN_STORAGE_KEY);
+    if (!jobId) return;
+    let ignored = false;
+    void apiGet<RunJob>(`/api/run/status?id=${encodeURIComponent(jobId)}`)
+      .then((job) => {
+        if (ignored) return;
+        setRunJob(job);
+        if (isRunActiveStatus(job.status)) {
+          connectRunStream(jobId);
+        } else {
+          localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+        }
+      })
+      .catch((error) => {
+        if (!ignored) {
+          setRunControlError(error instanceof Error ? error.message : "恢复运行状态失败");
+        }
+      });
+    return () => {
+      ignored = true;
+    };
+  }, []);
 
   function updateAccountLimit(value: string) {
     const next = Math.max(0, Number(value) || 0);
     setAccountLimit(next);
     localStorage.setItem("tg.accountLimit", String(next));
     setAccountLimitSavedAt(`已保存：${next === 0 ? "全部账号" : `${next} 个账号`}`);
+  }
+
+  function updateAccountConcurrency(value: string) {
+    const next = Math.min(MAX_ACCOUNT_CONCURRENCY, Math.max(1, Number(value) || 1));
+    setAccountConcurrency(next);
+    localStorage.setItem("tg.accountConcurrency", String(next));
   }
 
   function updateProxy(value: string) {
@@ -1358,6 +1871,70 @@ function WorkflowApp() {
     } catch (error) {
       setFlowDialogs([]);
       setFlowDialogsStatus(error instanceof Error ? error.message : "读取失败");
+    }
+  }
+
+  async function pollResourceGroup(jobId: string, nodeId: string) {
+    try {
+      const job = await apiGet<ResourceGroupJob>(`/api/resource-groups/status?id=${encodeURIComponent(jobId)}`);
+      setResourceGroupJob(job);
+      if (job.status === "running") {
+        resourceGroupPollRef.current = window.setTimeout(() => void pollResourceGroup(jobId, nodeId), 900);
+      } else if (job.status === "done" && job.invite_link) {
+        updateNode(nodeId, {
+          poolPeer: job.invite_link,
+          poolGroupId: job.group_id || "",
+          poolTitle: job.title,
+          poolOwnerAccountId: job.owner_account_id,
+          poolCreatorAccountId: job.owner_account_id,
+          poolMode: "managed",
+        });
+      }
+    } catch (error) {
+      setResourceGroupJob((current) => current ? {
+        ...current,
+        status: "error",
+        error: error instanceof Error ? error.message : "资源组状态读取失败",
+      } : null);
+    }
+  }
+
+  async function syncResourceGroup(node: Node) {
+    const data = node.data as Record<string, unknown>;
+    const owner = String(
+      data.poolOwnerAccountId
+      || accounts.find((account) => account.role === "main")?.id
+      || accounts[0]?.id
+      || "",
+    );
+    const title = String(data.poolTitle || "HX 资源组").trim();
+    setResourceGroupNodeId(node.id);
+    try {
+      const job = await apiPost<ResourceGroupJob>("/api/resource-groups/sync", {
+        confirm: true,
+        title,
+        owner_account_id: owner,
+        member_account_ids: accounts.map((account) => account.id),
+        existing_target: data.poolGroupId && String(data.poolCreatorAccountId || data.poolOwnerAccountId || "") === owner
+          ? String(data.poolPeer || "")
+          : "",
+        proxy,
+      });
+      setResourceGroupJob(job);
+      void pollResourceGroup(job.id, node.id);
+    } catch (error) {
+      setResourceGroupJob({
+        id: "",
+        title,
+        owner_account_id: owner,
+        status: "error",
+        total: accounts.length,
+        completed: 0,
+        joined: 0,
+        already: 0,
+        failed: 0,
+        error: error instanceof Error ? error.message : "资源组同步启动失败",
+      });
     }
   }
 
@@ -1405,6 +1982,17 @@ function WorkflowApp() {
     }, 1500);
   }
 
+  async function submitTwoFactorPassword() {
+    if (!qrJob || !twoFactorPassword) return;
+    try {
+      const status = await apiPost<QrJob>("/api/qr/password", { id: qrJob.id, password: twoFactorPassword });
+      setQrJob({ ...qrJob, ...status });
+      setTwoFactorPassword("");
+    } catch (error) {
+      setQrJob({ ...qrJob, status: "needs_password", error: error instanceof Error ? error.message : "密码验证失败" });
+    }
+  }
+
   const onNodesChange = useCallback((changes: NodeChange[]) => setNodes((items) => applyNodeChanges(changes, items)), []);
   const onEdgesChange = useCallback((changes: EdgeChange[]) => setEdges((items) => applyEdgeChanges(changes, items)), []);
   const onConnect = useCallback((connection: Connection) => {
@@ -1424,7 +2012,7 @@ function WorkflowApp() {
     const center = rect
       ? screenToFlowPosition({ x: rect.left + rect.width / 2, y: rect.top + rect.height / 2 })
       : { x: -viewport.x / viewport.zoom + 120, y: -viewport.y / viewport.zoom + 120 };
-    addNodeAt(type, center);
+    addNodeAt(type, findOpenNodePosition(center, nodes));
   }
 
   function addNodeAt(type: string, position: { x: number; y: number }) {
@@ -1538,21 +2126,98 @@ function WorkflowApp() {
     setApplyStatus(`已替换 ${Object.values(result.files).join("、")}；继续使用 ${result.github_workflow}`);
   }
 
-  async function startRun(flow: Workflow = currentWorkflow) {
-    setPreviewWorkflow(flow);
-    const job = await apiPost<RunJob>("/api/run/start", { workflow: flow, account_limit: accountLimit || undefined, proxy });
-    setRunJob(job);
-    const stream = new EventSource(`${API}/api/run/stream?id=${job.id}`);
+  function connectRunStream(jobId: string) {
+    runStreamRef.current?.close();
+    const stream = new EventSource(`${API}/api/run/stream?id=${encodeURIComponent(jobId)}`);
+    runStreamRef.current = stream;
     stream.onmessage = (event) => {
-      const status = JSON.parse(event.data) as RunJob;
-      setRunJob(status);
-      if (["done", "error", "not_found"].includes(status.status)) {
+      if (runStreamRef.current !== stream) return;
+      try {
+        const status = JSON.parse(event.data) as RunJob;
+        setRunJob(status);
+        if (isRunTerminalStatus(status.status)) {
+          stream.close();
+          runStreamRef.current = null;
+          if (localStorage.getItem(ACTIVE_RUN_STORAGE_KEY) === jobId) {
+            localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+          }
+        }
+      } catch {
         stream.close();
+        runStreamRef.current = null;
+        setRunControlError("运行状态响应格式错误，连接已关闭");
       }
     };
     stream.onerror = () => {
+      if (runStreamRef.current !== stream) return;
       stream.close();
+      runStreamRef.current = null;
+      setRunControlError("运行状态连接已中断，请刷新页面恢复任务状态");
     };
+  }
+
+  async function startRun(flow: Workflow = currentWorkflow) {
+    if (runStartPendingRef.current || runCancelPendingRef.current || isRunActiveStatus(runJob?.status)) return;
+    runStartPendingRef.current = true;
+    setRunStartPending(true);
+    setRunControlError("");
+    setPreviewWorkflow(flow);
+    runStreamRef.current?.close();
+    runStreamRef.current = null;
+    try {
+      const job = await apiPost<RunJob>("/api/run/start", {
+        workflow: flow,
+        account_ids: runAccountScope === "all" ? accounts.map((account) => account.id) : undefined,
+        account_limit: runAccountScope === "alts" ? accountLimit || undefined : undefined,
+        account_concurrency: accountConcurrency,
+        proxy,
+      });
+      setRunJob(job);
+      if (isRunTerminalStatus(job.status)) return;
+      localStorage.setItem(ACTIVE_RUN_STORAGE_KEY, job.id);
+      connectRunStream(job.id);
+    } catch (error) {
+      if (error instanceof ApiError && error.status === 409) {
+        const payload = error.payload as { job?: RunJob } | null;
+        if (payload?.job?.id) {
+          setRunJob(payload.job);
+          localStorage.setItem(ACTIVE_RUN_STORAGE_KEY, payload.job.id);
+          if (isRunActiveStatus(payload.job.status)) connectRunStream(payload.job.id);
+          setRunControlError("已有任务正在运行，已接管当前活动任务。请先终止或等待完成后再启动新的任务。");
+          return;
+        }
+      }
+      const message = error instanceof Error ? error.message : "启动任务失败";
+      setRunJob({ id: "", status: "error", error: message });
+    } finally {
+      runStartPendingRef.current = false;
+      setRunStartPending(false);
+    }
+  }
+
+  async function cancelRun() {
+    const job = runJob;
+    if (!job?.id || job.status !== "running" || runCancelPendingRef.current) return;
+    runCancelPendingRef.current = true;
+    setRunCancelPending(true);
+    setRunControlError("");
+    try {
+      const cancelled = await apiPost<RunJob>("/api/run/cancel", { id: job.id });
+      setRunJob((current) => {
+        if (current?.id !== cancelled.id) return cancelled;
+        return shouldAcceptRunStatus(current.status, cancelled.status) ? { ...current, ...cancelled } : current;
+      });
+      if (isRunTerminalStatus(cancelled.status)) {
+        runStreamRef.current?.close();
+        runStreamRef.current = null;
+        localStorage.removeItem(ACTIVE_RUN_STORAGE_KEY);
+      }
+    } catch (error) {
+      setRunControlError(error instanceof Error ? error.message : "终止任务失败");
+    } finally {
+      runCancelPendingRef.current = false;
+      setRunCancelPending(false);
+    }
   }
 
   function loadWorkflow(flow: Workflow) {
@@ -1599,73 +2264,23 @@ function WorkflowApp() {
 
   return (
     <main className={`app page-${page}`}>
-      <aside className="sidebar">
-        <div className="brand">
-          <div className="mark">
-            <svg viewBox="0 0 24 24" aria-hidden="true">
-              <path d="M21.8 3.2 18.4 20c-.2 1.1-.9 1.4-1.8.9l-5-3.7-2.4 2.3c-.3.3-.5.5-1 .5l.4-5.1 9.3-8.4c.4-.4-.1-.6-.6-.3L5.8 13.4.9 11.9c-1.1-.3-1.1-1.1.2-1.6L20.2 3c.9-.3 1.7.2 1.6.2Z" />
-            </svg>
-          </div>
-          <div>
-            <strong>Local Workflow</strong>
-            <span>Web only</span>
-          </div>
-        </div>
-        <nav>
-          <a className={page === "home" ? "active" : ""} href="/home" onClick={(event) => { event.preventDefault(); setPage("home"); }}>主页配置</a>
-          <a href="/chat" onClick={(event) => { event.preventDefault(); setPage("chat"); }}>对话调试</a>
-          <a className={page === "flow" ? "active" : ""} href="/flow" onClick={(event) => { event.preventDefault(); setPage("flow"); }}>编排流</a>
-          <a className={page === "run" ? "active" : ""} href="/run" onClick={(event) => { event.preventDefault(); setPage("run"); }}>本地执行</a>
-        </nav>
-      </aside>
+      <AppSidebar page={page} onNavigate={setPage} />
 
       <section className={page === "flow" ? "content flow-content" : page === "chat" ? "content chat-content" : "content"}>
         {page === "home" ? (
-          <>
-            <header className="topbar">
-              <div>
-                <h1>账号与小号池</h1>
-                <p>所有账号导入、头像与名称读取都在 Web 页面发起；小号池来自本地 sessions/tg_session_strings.txt。</p>
-              </div>
-              <div className="actions">
-                <Field label="代理" value={proxy} onChange={updateProxy} />
-                <button className="primary" onClick={() => loadAccounts(true)}>刷新账号资料</button>
-              </div>
-            </header>
-            <section className="grid two">
-              <div className="panel">
-                <div className="panel-head">
-                  <h2>主账号</h2>
-                  <button onClick={() => startQr("main")}>添加主账号</button>
-                </div>
-                <AccountList accounts={accounts} role="main" />
-              </div>
-              <div className="panel">
-                <div className="panel-head">
-                  <h2>小号 Pool</h2>
-                  <button onClick={() => startQr("alt")}>添加小号</button>
-                </div>
-                <AccountList accounts={accounts} role="alt" />
-              </div>
-            </section>
-            {qrOpen ? (
-              <div className="modal-backdrop" onClick={() => setQrOpen(false)}>
-                <div className="modal" onClick={(event) => event.stopPropagation()}>
-                  <div className="panel-head">
-                    <h2>扫码导入账号</h2>
-                    <button onClick={() => setQrOpen(false)}>关闭</button>
-                  </div>
-                  <div className="qr-modal-body">
-                    <span className="status">{qrJob?.status || "等待二维码"}</span>
-                    {qrJob?.qr_image ? <img className="qr-image" src={qrJob.qr_image} alt="" /> : <div className="qr-placeholder">二维码生成中</div>}
-                    {qrJob?.url ? <a href={qrJob.url}>{qrJob.url}</a> : null}
-                    <p>使用 Telegram 移动端扫描二维码完成登录。</p>
-                    {qrJob?.error ? <div className="error-box">{qrJob.error}</div> : null}
-                  </div>
-                </div>
-              </div>
-            ) : null}
-          </>
+          <AccountCenter
+            accounts={accounts}
+            proxy={proxy}
+            qrJob={qrJob}
+            qrOpen={qrOpen}
+            twoFactorPassword={twoFactorPassword}
+            onProxyChange={updateProxy}
+            onRefresh={() => void loadAccounts(true)}
+            onStartQr={(role) => void startQr(role)}
+            onCloseQr={() => setQrOpen(false)}
+            onPasswordChange={setTwoFactorPassword}
+            onSubmitPassword={() => void submitTwoFactorPassword()}
+          />
         ) : null}
 
         {page === "chat" ? (
@@ -1679,7 +2294,7 @@ function WorkflowApp() {
                 <Field label="代理" value={proxy} onChange={updateProxy} />
               </div>
             </header>
-            <ChatDebugger accounts={accounts} proxy={proxy} onRefreshAccounts={() => loadAccounts(true, proxy)} />
+            <ChatDebugger accounts={accounts} proxy={proxy} onRefreshAccounts={() => loadAccounts(true, proxy)} focus={chatFocus} />
           </>
         ) : null}
 
@@ -1708,16 +2323,18 @@ function WorkflowApp() {
                   onChange={updateFlowAccount}
                   options={accounts.map((account) => ({ value: account.id, label: `${account.role === "main" ? "主账号" : "小号"} · ${account.name}` }))}
                 />
-                <div className="workflow-picker">
-                  <span>复用执行流</span>
-                  {workflows.length === 0 ? <em>暂无保存项</em> : null}
-                  {workflows.map((flow) => (
-                    <div className="workflow-picker-row" key={flow.id}>
-                      <button onClick={() => loadWorkflow(flow)} title={flow.id}>{flow.name || flow.id}</button>
-                      <button className="danger compact" onClick={() => deleteWorkflow(flow)} title="删除工作流">删除</button>
-                    </div>
-                  ))}
-                </div>
+                <SelectField
+                  label="复用执行流"
+                  value={savedWorkflowId}
+                  onChange={(value) => {
+                    const flow = workflows.find((item) => item.id === value);
+                    if (flow) loadWorkflow(flow);
+                  }}
+                  options={[
+                    { value: "", label: workflows.length ? "选择已保存执行流" : "暂无保存项" },
+                    ...workflows.map((flow) => ({ value: flow.id, label: `${flow.name || flow.id} · ${flow.id}` })),
+                  ]}
+                />
               </div>
               <div className="flow-canvas">
                 <ReactFlow
@@ -1803,9 +2420,15 @@ function WorkflowApp() {
                       botCommands={flowBotCommands}
                       commandPeer={selectedSendPeer}
                       commandStatus={flowCommandStatus}
+                      commandLoading={flowCommandLoading}
+                      onReloadCommands={() => setFlowCommandReload((value) => value + 1)}
                       dialogs={flowDialogs}
                       dialogsStatus={flowDialogsStatus}
                       onLoadDialogs={loadFlowDialogs}
+                      accounts={accounts}
+                      inferredInputSource={selectedInputSource}
+                      resourceGroupJob={resourceGroupNodeId === selectedNode?.id ? resourceGroupJob : null}
+                      onSyncResourceGroup={(node) => void syncResourceGroup(node)}
                     />
                     <button onClick={() => selectedNodeId && setNodes((items) => items.filter((node) => node.id !== selectedNodeId))}>删除节点</button>
                   </>
@@ -1860,7 +2483,10 @@ function WorkflowApp() {
                       <button onClick={() => addNodeAt("task", contextMenu.position)}>创建任务定义</button>
                       <button onClick={() => addNodeAt("open", contextMenu.position)}>创建打开对话</button>
                       <button onClick={() => addNodeAt("send", contextMenu.position)}>创建发送消息</button>
+                      <button onClick={() => addNodeAt("continuous_request", contextMenu.position)}>创建持续请求</button>
+                      <button onClick={() => addNodeAt("preview_catalog", contextMenu.position)}>创建资源预览索引</button>
                       <button onClick={() => addNodeAt("parse", contextMenu.position)}>创建解析/提取</button>
+                      <button onClick={() => addNodeAt("resource_catalog", contextMenu.position)}>创建资源链接去重</button>
                       <button onClick={() => addNodeAt("forward", contextMenu.position)}>创建转发消息</button>
                       <button onClick={() => addNodeAt("resource_pool", contextMenu.position)}>创建资源池转存</button>
                       <button onClick={() => addNodeAt("join", contextMenu.position)}>创建添加账号/群组</button>
@@ -1891,9 +2517,18 @@ function WorkflowApp() {
             <header className="topbar">
               <div>
                 <h1>本地执行工作流</h1>
-                <p>选择保存的工作流本地执行，也可以直接执行当前编排。执行使用小号池中的所有账号。</p>
+                <p>选择保存的工作流本地执行，也可以直接执行当前编排。账号范围由本次运行配置决定。</p>
               </div>
-              <button className="primary" onClick={() => startRun()}>执行当前编排</button>
+              {runIsActive ? (
+                <button className="danger run-control-button" disabled={runIsCancelling} onClick={cancelRun}>
+                  <Square aria-hidden="true" />
+                  {runIsCancelling ? "正在终止" : "终止任务"}
+                </button>
+              ) : (
+                <button className="primary run-control-button" disabled={runControlsLocked} onClick={() => startRun()}>
+                  {runStartPending ? "正在启动" : "执行当前编排"}
+                </button>
+              )}
             </header>
             <section className="grid two">
               <div className="panel">
@@ -1909,7 +2544,7 @@ function WorkflowApp() {
                         <span>{flow.id}</span>
                       </button>
                       <button onClick={() => loadWorkflow(flow)}>编辑</button>
-                      <button onClick={() => startRun(flow)}>执行</button>
+                      <button disabled={runControlsLocked} onClick={() => startRun(flow)}>执行</button>
                       <button className="danger" onClick={() => deleteWorkflow(flow)}>删除</button>
                     </article>
                   ))}
@@ -1918,12 +2553,148 @@ function WorkflowApp() {
               <div className="panel">
                 <div className="panel-head">
                   <h2>运行状态</h2>
-                  <span className="status">{runJob?.status || "未运行"}</span>
+                  <span className="status">{runStartPending ? "启动中" : runJob?.status || "未运行"}</span>
                 </div>
-                <Field label="账号数量 0 为全部" type="number" value={accountLimit} onChange={updateAccountLimit} />
-                <div className="save-hint">{accountLimitSavedAt}</div>
+                <SelectField
+                  label="执行账号"
+                  value={runAccountScope}
+                  disabled={runControlsLocked}
+                  onChange={(value) => {
+                    const scope: RunAccountScope = value === "alts" ? "alts" : "all";
+                    setRunAccountScope(scope);
+                    localStorage.setItem("tg.runAccountScope", scope);
+                  }}
+                  options={[
+                    { value: "all", label: `全部已导入账号（${accounts.length}）` },
+                    { value: "alts", label: `仅小号池（${accounts.filter((account) => account.role === "alt").length}）` },
+                  ]}
+                />
+                {runAccountScope === "alts" ? (
+                  <>
+                    <Field label="小号数量 0 为全部" type="number" value={accountLimit} disabled={runControlsLocked} onChange={updateAccountLimit} />
+                    <div className="save-hint">{accountLimitSavedAt}</div>
+                  </>
+                ) : <div className="save-hint">将按账号中心当前顺序逐个执行</div>}
+                <Field
+                  label={`账号并发 1-${MAX_ACCOUNT_CONCURRENCY}`}
+                  type="number"
+                  min={1}
+                  max={MAX_ACCOUNT_CONCURRENCY}
+                  step={1}
+                  value={accountConcurrency}
+                  disabled={runControlsLocked}
+                  onChange={updateAccountConcurrency}
+                />
+                <div className="save-hint">{accountConcurrency === 1 ? "默认串行，风控最低" : `同时执行 ${accountConcurrency} 个不同账号；总请求数仍为账号数 × 重复次数`}</div>
+                {runControlError ? <div className="run-control-error" role="alert">{runControlError}</div> : null}
                 <pre className="code run-log" ref={runOutputRef}>{runJob?.output || runJob?.error || "暂无输出"}</pre>
               </div>
+            </section>
+            <section className="panel preview-result-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>资源预览索引</h2>
+                  <span>{runJob?.resource_previews?.length || 0} 个唯一预览 · 未解锁</span>
+                </div>
+              </div>
+              {runJob?.resource_previews?.length ? (
+                <div className="resource-preview-list">
+                  {runJob.resource_previews.map((preview) => (
+                    <article key={preview.resource_key} className={preview.is_new === false ? "resource-preview-row duplicate" : "resource-preview-row"}>
+                      <div className="resource-preview-main">
+                        <strong>{preview.description || preview.resource_key}</strong>
+                        <code>{preview.resource_key}</code>
+                        <small>
+                          图片 {preview.photos || 0} · 视频 {preview.videos || 0} · 文件 {preview.files || 0}
+                          {preview.unlock_cost ? ` · ${preview.unlock_cost} 积分` : ""}
+                          {preview.account_id
+                            ? ` · ${accounts.find((account) => account.id === preview.account_id)?.name || preview.account_id}`
+                            : preview.account_index ? ` · 账号 #${preview.account_index}` : ""}
+                          {preview.round ? ` · 第 ${preview.round} 轮` : ""}
+                          {preview.seen_count ? ` · 命中 ${preview.seen_count} 次` : ""}
+                        </small>
+                        {preview.preview_message_links?.length ? (
+                          <div className="resource-preview-links">
+                            {preview.preview_message_links.map((link, index) => (
+                              safeResourceHref(link) ? (
+                                <a
+                                  key={`${preview.resource_key}-${link}`}
+                                  href={safeResourceHref(link) || undefined}
+                                  target={linkWindowTarget(safeResourceHref(link) || "")}
+                                  rel={linkWindowTarget(safeResourceHref(link) || "") ? "noreferrer" : undefined}
+                                >
+                                  预览 {index + 1}
+                                  <ExternalLink aria-hidden="true" />
+                                </a>
+                              ) : null
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                      <div className="resource-preview-actions">
+                        <button className="icon-button" onClick={() => void navigator.clipboard.writeText(preview.resource_key)} title="复制资源索引">
+                          <Copy aria-hidden="true" />
+                        </button>
+                        {preview.message_link && safeResourceHref(preview.message_link) ? (
+                          <a
+                            className="icon-button"
+                            href={safeResourceHref(preview.message_link) || undefined}
+                            target={linkWindowTarget(safeResourceHref(preview.message_link) || "")}
+                            rel={linkWindowTarget(safeResourceHref(preview.message_link) || "") ? "noreferrer" : undefined}
+                            title="打开来源消息"
+                          >
+                            <ExternalLink aria-hidden="true" />
+                          </a>
+                        ) : null}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              ) : <div className="empty">暂无资源预览索引</div>}
+            </section>
+            <section className="panel resource-result-panel">
+              <div className="panel-head">
+                <div>
+                  <h2>资源链接</h2>
+                  <span>{runJob?.resource_links?.length || 0} 个唯一结果</span>
+                </div>
+              </div>
+              {runJob?.resource_links?.length ? (
+                <div className="resource-link-list">
+                  {runJob.resource_links.map((resource) => {
+                    const href = safeResourceHref(resource.url);
+                    return (
+                      <article key={resource.url} className={resource.is_new === false ? "resource-link-row duplicate" : "resource-link-row"}>
+                        <div>
+                          {href ? (
+                            <a href={href} target={linkWindowTarget(href)} rel={linkWindowTarget(href) ? "noreferrer" : undefined} title="打开资源链接">
+                              <span>{resource.url}</span>
+                              <ExternalLink aria-hidden="true" />
+                            </a>
+                          ) : <span>{resource.url}</span>}
+                          <small>
+                            {resource.source_peer || "未知来源"}
+                            {resource.account_index ? ` · 账号 #${resource.account_index}` : ""}
+                            {resource.round ? ` · 第 ${resource.round} 轮` : ""}
+                            {resource.seen_count ? ` · 命中 ${resource.seen_count} 次` : ""}
+                          </small>
+                        </div>
+                        {resource.message_link && safeResourceHref(resource.message_link) ? (
+                          <a
+                            className="icon-button"
+                            href={safeResourceHref(resource.message_link) || undefined}
+                            target={linkWindowTarget(safeResourceHref(resource.message_link) || "")}
+                            rel={linkWindowTarget(safeResourceHref(resource.message_link) || "") ? "noreferrer" : undefined}
+                            title="打开来源消息"
+                          >
+                            <ExternalLink aria-hidden="true" />
+                          </a>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              ) : <div className="empty">暂无资源链接</div>}
             </section>
             <section className="panel run-flow-panel">
               <div className="panel-head">
@@ -1985,6 +2756,25 @@ function WorkflowApp() {
             </section>
           </>
         ) : null}
+
+        {page === "resources" ? (
+          <ResourcePreviewPage
+            previews={resourcePreviews}
+            accounts={accounts}
+            status={resourcePreviewsStatus}
+            updatedAt={resourcePreviewsUpdatedAt}
+            sourcePath={resourcePreviewsPath}
+            sourceFiles={resourcePreviewFiles}
+            selectedSource={selectedResourcePreviewFile}
+            proxy={proxy}
+            onRefresh={() => void loadResourcePreviews(selectedResourcePreviewFile)}
+            onSourceChange={(path) => void loadResourcePreviews(path)}
+            onLocate={locateResourceMessage}
+          />
+        ) : null}
+
+        {page === "github" ? <GithubManager /> : null}
+        {page === "bots" ? <BotOrchestrator /> : null}
       </section>
     </main>
   );

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import math
 import time
 import uuid
 from pathlib import Path
@@ -11,6 +12,88 @@ from typing import Any
 import yaml
 
 from local_web_accounts import GITHUB_WORKFLOW, ROOT, SIGNINS_CONFIG, TASKS_CONFIG
+
+
+def _bounded_number(
+    data: dict[str, Any],
+    key: str,
+    default: int | float,
+    minimum: int | float,
+    maximum: int | float,
+    *,
+    integer: bool = False,
+) -> int | float:
+    raw = data.get(key, default)
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)):
+        raise ValueError(f"{key} 必须是数字")
+    value = float(raw)
+    if not math.isfinite(value):
+        raise ValueError(f"{key} 必须是有限数字")
+    if integer and not value.is_integer():
+        raise ValueError(f"{key} 必须是整数")
+    if not minimum <= value <= maximum:
+        raise ValueError(f"{key} 必须在 {minimum}..{maximum} 之间")
+    return int(value) if integer else value
+
+
+def _compile_continuous_request(data: dict[str, Any], node_id: str) -> dict[str, Any]:
+    request_mode_raw = data.get("requestMode", "message")
+    if not isinstance(request_mode_raw, str):
+        raise ValueError("requestMode 必须是 message 或 button")
+    request_mode = request_mode_raw.strip()
+    if request_mode not in {"message", "button"}:
+        raise ValueError("requestMode 必须是 message 或 button")
+    request_text_raw = data.get("requestText")
+    request_text = request_text_raw.strip() if isinstance(request_text_raw, str) else ""
+    if not request_text:
+        raise ValueError("requestText 不能为空")
+
+    repeat_count = int(_bounded_number(data, "repeatCount", 1, 1, 1000, integer=True))
+    max_failures = int(
+        _bounded_number(data, "maxFailures", repeat_count, 1, repeat_count, integer=True)
+    )
+    save_as_raw = data.get("saveAs", "resource_responses")
+    links_save_as_raw = data.get("linksSaveAs", "resource_records")
+    save_as = save_as_raw.strip() if isinstance(save_as_raw, str) else ""
+    links_save_as = links_save_as_raw.strip() if isinstance(links_save_as_raw, str) else ""
+    if not save_as:
+        raise ValueError("saveAs 不能为空")
+    if not links_save_as:
+        raise ValueError("linksSaveAs 不能为空")
+
+    return {
+        "type": "continuous_request",
+        "node_id": node_id,
+        "request_mode": request_mode,
+        "request_text": request_text,
+        "repeat_count": repeat_count,
+        "interval_seconds": float(_bounded_number(data, "intervalSeconds", 3, 0.5, 3600)),
+        "response_wait_seconds": float(_bounded_number(data, "responseWaitSeconds", 3, 0, 300)),
+        "response_limit": int(_bounded_number(data, "responseLimit", 5, 1, 100, integer=True)),
+        "save_as": save_as,
+        "links_save_as": links_save_as,
+        "max_failures": max_failures,
+    }
+
+
+def _resolve_node_input(
+    data: dict[str, Any],
+    inferred: str,
+    default: str,
+    legacy_defaults: set[str],
+) -> str:
+    mode = str(data.get("inputMode") or "").strip().lower()
+    if mode and mode not in {"auto", "variable"}:
+        raise ValueError("inputMode 必须是 auto 或 variable")
+    configured = str(data.get("source") or "").strip()
+    if mode == "variable":
+        if not configured:
+            raise ValueError("自定义输入变量不能为空")
+        return configured
+    if not mode and configured and configured not in legacy_defaults:
+        return configured
+    return inferred or configured or default
+
 
 def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
     nodes = flow.get("nodes", [])
@@ -39,6 +122,8 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
         actions: list[dict[str, Any]] = []
         peer = inherited_peer
         collect_limit = 5
+        latest_link_source = ""
+        latest_message_source = ""
         include_contains: list[str] = []
         forward: dict[str, Any] = {"enabled": False}
 
@@ -68,6 +153,8 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     include_contains.append(pattern)
                 parse_mode = str(data.get("parseMode") or data.get("mode") or "match")
                 after_send = parse_mode == "after_send" or bool(data.get("afterSend"))
+                save_as = str(data.get("saveAs") or "last_parse")
+                extract = str(data.get("extract") or "messages")
                 if not after_send:
                     collect_limit = int(data.get("limit") or collect_limit)
                 actions.append({
@@ -75,10 +162,51 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     "node_id": current,
                     "pattern": pattern,
                     "regex": bool(data.get("regex")),
-                    "save_as": str(data.get("saveAs") or "last_parse"),
-                    "extract": str(data.get("extract") or "messages"),
+                    "limit": int(data.get("limit") or collect_limit),
+                    "save_as": save_as,
+                    "extract": extract,
                     "after_send": after_send,
                     "wait_seconds": float(data.get("waitSeconds") or 3),
+                })
+                latest_message_source = "last_parse"
+                if extract in {"links", "join_links"}:
+                    latest_link_source = save_as
+            elif node_type == "continuous_request":
+                compiled_request = _compile_continuous_request(data, current)
+                actions.append(compiled_request)
+                latest_message_source = str(compiled_request["save_as"])
+                latest_link_source = str(compiled_request["links_save_as"])
+            elif node_type == "preview_catalog":
+                callback_prefix = str(data.get("callbackPrefix") or "unlock:").strip()
+                if not callback_prefix:
+                    raise ValueError("callbackPrefix 不能为空")
+                source = _resolve_node_input(
+                    data,
+                    latest_message_source,
+                    "resource_responses",
+                    {"resource_responses", "last_parse"},
+                )
+                actions.append({
+                    "type": "preview_catalog",
+                    "node_id": current,
+                    "source": source,
+                    "callback_prefix": callback_prefix,
+                    "dedupe_store": str(data.get("dedupeStore") or "sessions/resource_previews.sqlite3"),
+                    "export_path": str(data.get("exportPath") or "sessions/resource_previews.json"),
+                })
+            elif node_type == "resource_catalog":
+                source = _resolve_node_input(
+                    data,
+                    latest_link_source,
+                    "resource_records",
+                    {"resource_records", "last_links"},
+                )
+                actions.append({
+                    "type": "resource_catalog",
+                    "node_id": current,
+                    "source": source,
+                    "dedupe_store": str(data.get("dedupeStore") or "sessions/resource_catalog.sqlite3"),
+                    "export_path": str(data.get("exportPath") or "sessions/resource_links.json"),
                 })
             elif node_type == "forward":
                 forward = {
@@ -91,11 +219,17 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                 }
                 actions.append({"type": "forward", "node_id": current, "to_peer": str(data.get("toPeer") or ""), "source": str(data.get("source") or "last_parse")})
             elif node_type == "resource_pool":
+                source = _resolve_node_input(
+                    data,
+                    latest_message_source,
+                    "last_parse",
+                    {"resource_responses", "last_parse"},
+                )
                 actions.append({
                     "type": "resource_pool",
                     "node_id": current,
                     "pool_peer": str(data.get("poolPeer") or ""),
-                    "source": str(data.get("source") or "last_parse"),
+                    "source": source,
                     "media_types": [
                         kind
                         for kind, enabled in {
@@ -108,6 +242,7 @@ def flow_to_signins(flow: dict[str, Any]) -> dict[str, Any]:
                     "dedupe_store": str(data.get("dedupeStore") or "sessions/resource_pool_seen.sqlite3"),
                     "join_pool": bool(data.get("joinPool", True)),
                 })
+                latest_link_source = "resource_records"
             elif node_type == "link":
                 actions.append({"type": "open_link", "node_id": current, "url": str(data.get("url") or "")})
             elif node_type == "join":
@@ -209,17 +344,23 @@ def flow_to_github_actions(flow: dict[str, Any]) -> dict[str, Any]:
                 "steps": [
                     {"uses": "actions/checkout@v4"},
                     {
-                        "name": "Restore resource pool dedupe DB",
+                        "name": "Restore resource indexes",
                         "uses": "actions/cache@v4",
                         "with": {
                             "path": "\n".join(
                                 [
                                     "components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3",
                                     "components/HX-Workflows/tg/sessions/resource_pool_seen.sqlite3-*",
+                                    "components/HX-Workflows/tg/sessions/resource_catalog.sqlite3",
+                                    "components/HX-Workflows/tg/sessions/resource_catalog.sqlite3-*",
+                                    "components/HX-Workflows/tg/sessions/resource_links.json",
+                                    "components/HX-Workflows/tg/sessions/resource_previews.sqlite3",
+                                    "components/HX-Workflows/tg/sessions/resource_previews.sqlite3-*",
+                                    "components/HX-Workflows/tg/sessions/resource_previews.json",
                                 ]
                             ),
-                            "key": "tg-resource-pool-${{ github.repository }}",
-                            "restore-keys": "tg-resource-pool-",
+                            "key": "tg-resource-pool-${{ github.repository }}-${{ github.run_id }}",
+                            "restore-keys": "tg-resource-pool-${{ github.repository }}-",
                         },
                     },
                     {

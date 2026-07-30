@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import sys
 import traceback
+from asyncio import Semaphore, gather
 from pathlib import Path
 from typing import Any
 
@@ -29,6 +30,20 @@ from signer_reporting import (
     send_report_with_emall,
     write_report,
 )
+
+MAX_ACCOUNT_CONCURRENCY = 8
+
+
+def account_concurrency(defaults: dict[str, Any], selected: dict[str, Any]) -> int:
+    raw = selected.get("account_concurrency") or defaults.get("account_concurrency") or optional_env("TG_ACCOUNT_CONCURRENCY") or "1"
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        raise RuntimeError("account_concurrency 必须是整数") from None
+    if not 1 <= value <= MAX_ACCOUNT_CONCURRENCY:
+        raise RuntimeError(f"account_concurrency 必须在 1..{MAX_ACCOUNT_CONCURRENCY} 之间")
+    return value
+
 
 async def run_one_account(job: dict[str, Any], defaults: dict[str, Any], session: str, account_index: int) -> RunResult:
     job_id = str(job["id"])
@@ -127,20 +142,52 @@ async def run_job(config: dict[str, Any], job_id: str) -> int:
 
     accounts_secret = str(selected.get("accounts_secret") or defaults.get("accounts_secret") or "TG_SESSION_STRINGS")
     sessions = read_secret_lines(accounts_secret)
+    concurrency = account_concurrency(defaults, selected)
 
     failures = 0
-    for index, session in enumerate(sessions, start=1):
-        try:
-            await run_one_account(selected, defaults, session, index)
-        except Exception as exc:
-            failures += 1
-            print(f"账号 #{index} 执行失败: {exc}", file=sys.stderr)
+    semaphore = Semaphore(concurrency)
+
+    async def run_indexed(index: int, session: str) -> bool:
+        async with semaphore:
+            try:
+                await run_one_account(selected, defaults, session, index)
+                return True
+            except Exception as exc:
+                print(f"账号 #{index} 执行失败: {exc}", file=sys.stderr)
+                return False
+
+    results = await gather(*(run_indexed(index, session) for index, session in enumerate(sessions, start=1)))
+    failures = results.count(False)
 
     if failures:
         print(f"任务 {job_id} 完成，但有 {failures}/{len(sessions)} 个账号失败。")
         return 1
     print(f"任务 {job_id} 全部账号执行成功。")
     return 0
+
+
+async def run_account_collect(
+    selected: dict[str, Any],
+    defaults: dict[str, Any],
+    job_id: str,
+    index: int,
+    session: str,
+    semaphore: Semaphore,
+) -> RunResult:
+    async with semaphore:
+        try:
+            return await run_one_account(selected, defaults, session, index)
+        except Exception as exc:
+            print(f"账号 #{index} 执行失败: {exc}", file=sys.stderr)
+            return RunResult(
+                job_id=job_id,
+                account_index=index,
+                status="failure",
+                matched=False,
+                summary=str(exc),
+                messages=[],
+                node_logs={},
+            )
 
 
 async def run_job_collect(config: dict[str, Any], job_id: str) -> tuple[list[RunResult], int]:
@@ -155,26 +202,16 @@ async def run_job_collect(config: dict[str, Any], job_id: str) -> tuple[list[Run
 
     accounts_secret = str(selected.get("accounts_secret") or defaults.get("accounts_secret") or "TG_SESSION_STRINGS")
     sessions = read_secret_lines(accounts_secret)
+    concurrency = account_concurrency(defaults, selected)
 
-    results: list[RunResult] = []
-    failures = 0
-    for index, session in enumerate(sessions, start=1):
-        try:
-            results.append(await run_one_account(selected, defaults, session, index))
-        except Exception as exc:
-            failures += 1
-            print(f"账号 #{index} 执行失败: {exc}", file=sys.stderr)
-            results.append(
-                RunResult(
-                    job_id=job_id,
-                    account_index=index,
-                    status="failure",
-                    matched=False,
-                    summary=str(exc),
-                    messages=[],
-                    node_logs={},
-                )
-            )
+    semaphore = Semaphore(concurrency)
+    results = await gather(
+        *(
+            run_account_collect(selected, defaults, job_id, index, session, semaphore)
+            for index, session in enumerate(sessions, start=1)
+        )
+    )
+    failures = sum(1 for result in results if result.status == "failure")
 
     if failures:
         print(f"任务 {job_id} 完成，但有 {failures}/{len(sessions)} 个账号失败。")

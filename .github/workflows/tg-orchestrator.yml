@@ -62,6 +62,21 @@ jobs:
       - name: 拉取仓库
         uses: actions/checkout@v4
 
+      - name: 恢复资源索引
+        uses: actions/cache@v4
+        with:
+          path: |
+            tg/sessions/resource_pool_seen.sqlite3
+            tg/sessions/resource_pool_seen.sqlite3-*
+            tg/sessions/resource_catalog.sqlite3
+            tg/sessions/resource_catalog.sqlite3-*
+            tg/sessions/resource_links.json
+            tg/sessions/resource_previews.sqlite3
+            tg/sessions/resource_previews.sqlite3-*
+            tg/sessions/resource_previews.json
+          key: tg-resource-pool-${{ github.repository }}-${{ github.run_id }}
+          restore-keys: tg-resource-pool-${{ github.repository }}-
+
       - name: 安装 uv
         uses: astral-sh/setup-uv@v5
 

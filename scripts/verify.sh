@@ -22,6 +22,9 @@ uv run --project emall python -m unittest discover -s emall/tests -v
 echo "==> S1: Bilibili signing and filename safety"
 uv run --project bilibili-api python -m unittest discover -s bilibili-api/tests -v
 
+echo "==> S1: robot blueprint node contracts and templates"
+npm --prefix tg/web run test
+
 echo "==> static/S3: React TypeScript production build"
 npm --prefix tg/web run build
 
