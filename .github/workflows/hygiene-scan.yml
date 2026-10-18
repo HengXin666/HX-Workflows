@@ -49,6 +49,7 @@ jobs:
           GITHUB_RUN_ID: ${{ github.run_id }}
           GITHUB_SERVER_URL: ${{ github.server_url }}
           GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO_LIMIT: ${{ inputs.repo_limit }}
         run: |
           if [ -z "$HYGIENE_TOKEN" ]; then
             echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可读取全部仓库的 classic PAT, 权限勾选 repo."
@@ -57,7 +58,7 @@ jobs:
           PYTHONPATH=hygiene uv run --project hygiene python -m hygiene scan \
             --config hygiene/config.yml \
             --badges hygiene/badges \
-            --repo-limit "${{ inputs.repo_limit }}" \
+            --repo-limit "$REPO_LIMIT" \
             --force-new "${{ inputs.force_new }}"
 
       - name: 提交状态卡片
@@ -70,13 +71,7 @@ jobs:
             echo "状态卡片没有变化"
           else
             git commit -m "更新仓库卫生状态卡片"
-            git push
+            branch="$(git rev-parse --abbrev-ref HEAD)"
+            git pull --rebase origin "$branch"
+            git push origin "$branch"
           fi
-
-      - name: 上传扫描报告
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: hygiene-report
-          path: hygiene/output/report.json
-          if-no-files-found: ignore

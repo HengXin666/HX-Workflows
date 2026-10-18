@@ -12,7 +12,7 @@ from collections.abc import Iterator
 from typing import Any
 
 from hygiene.models import SkillInstance, parse_version
-from hygiene.trees import GitFile
+from hygiene.trees import GitFile, git_blob_mode
 
 ACCEPT = "application/vnd.github+json"
 API_VERSION = "2022-11-28"
@@ -70,7 +70,13 @@ class GitHub:
             except urllib.error.HTTPError as error:
                 detail = error.read().decode("utf-8", errors="replace")[:500]
                 last_error = GitHubError(error.code, f"GitHub {method} {path} 返回 {error.code}: {detail}")
-                if error.code in {403, 429, 502, 503} and attempt < 2:
+                if method in {"GET", "HEAD"} and error.code in {403, 429, 502, 503} and attempt < 2:
+                    time.sleep(2**attempt)
+                    continue
+                raise last_error from None
+            except (urllib.error.URLError, TimeoutError, OSError):
+                last_error = GitHubError(0, f"GitHub {method} {path} 网络失败")
+                if method in {"GET", "HEAD"} and attempt < 2:
                     time.sleep(2**attempt)
                     continue
                 raise last_error from None
@@ -114,16 +120,28 @@ class GitHub:
     def list_branches(self, owner: str, repo: str) -> list[dict[str, Any]]:
         return list(self.paginate(f"/repos/{owner}/{repo}/branches"))
 
-    def open_pr_heads(self, owner: str, repo: str) -> list[str]:
-        heads: list[str] = []
+    def branch_tip(self, owner: str, repo: str, branch: str) -> str:
+        ref = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(branch)}")
+        return str((ref.get("object") or {}).get("sha") or "")
+
+    def open_pulls(self, owner: str, repo: str) -> list[dict[str, str]]:
+        pulls: list[dict[str, str]] = []
         for pull in self.paginate(f"/repos/{owner}/{repo}/pulls", {"state": "open"}):
             head = pull.get("head") or {}
             repository = head.get("repo") or {}
-            if repository.get("name") == repo and (repository.get("owner") or {}).get("login") == owner:
-                name = head.get("ref")
-                if isinstance(name, str):
-                    heads.append(name)
-        return heads
+            if repository.get("name") != repo or (repository.get("owner") or {}).get("login") != owner:
+                continue
+            pulls.append(
+                {
+                    "number": str(pull.get("number") or ""),
+                    "url": str(pull.get("html_url") or ""),
+                    "ref": str(head.get("ref") or ""),
+                }
+            )
+        return pulls
+
+    def open_pr_heads(self, owner: str, repo: str) -> list[str]:
+        return [item["ref"] for item in self.open_pulls(owner, repo) if item["ref"]]
 
     def compare_to_base(self, owner: str, repo: str, base: str, heads: list[str]) -> dict[str, dict[str, Any]]:
         compared: dict[str, dict[str, Any]] = {}
@@ -148,7 +166,7 @@ class GitHub:
             )
             data, errors = self.graphql(query)
             ref = ((data.get("repository") or {}).get("ref") or {}) if isinstance(data, dict) else {}
-            failed = _alias_errors(errors)
+            failed = _alias_errors(errors, prefix="c")
             for index, head in enumerate(chunk):
                 if index in failed or not isinstance(ref, dict) or ref.get(f"c{index}") is None:
                     compared[head] = {"error": failed.get(index, "无法比较")}
@@ -167,9 +185,16 @@ class GitHub:
         repo: str,
         default_branch: str,
         roots: tuple[str, ...],
+        commit_sha: str | None = None,
     ) -> tuple[list[SkillInstance], list[str]]:
-        ref = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(default_branch)}")
-        commit_sha = str((ref.get("object") or {}).get("sha") or "")
+        if not commit_sha:
+            try:
+                ref = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(default_branch)}")
+            except GitHubError as error:
+                if error.status in {404, 409}:
+                    return [], []
+                raise
+            commit_sha = str((ref.get("object") or {}).get("sha") or "")
         tree = self.request("GET", f"/repos/{owner}/{repo}/git/trees/{commit_sha}?recursive=1")
         if tree.get("truncated"):
             return [], ["目录树被截断, 这次没有判断 Skill"]
@@ -177,10 +202,13 @@ class GitHub:
         found = _skill_paths(entries, roots)
         if not found:
             return [], []
-        texts = self._blob_texts(owner, repo, commit_sha, [item[2] for item in found])
+        texts, failures = self._blob_texts(owner, repo, commit_sha, [item[2] for item in found])
         dates = self._path_commits(commit_sha, owner, repo, [item[0] for item in found])
         skills: list[SkillInstance] = []
+        errors = [f"{path} 的 SKILL.md 读取失败" for path in failures]
         for path, folder, skill_file, tree_sha in found:
+            if skill_file in failures:
+                continue
             name, version = _frontmatter(texts.get(skill_file, ""))
             commit = dates.get(path) or {}
             skills.append(
@@ -197,10 +225,11 @@ class GitHub:
                     committed_at=commit.get("at"),
                 )
             )
-        return skills, []
+        return skills, errors
 
-    def _blob_texts(self, owner: str, repo: str, commit_sha: str, paths: list[str]) -> dict[str, str]:
+    def _blob_texts(self, owner: str, repo: str, commit_sha: str, paths: list[str]) -> tuple[dict[str, str], set[str]]:
         texts: dict[str, str] = {}
+        failed: set[str] = set()
         for offset in range(0, len(paths), 15):
             chunk = paths[offset : offset + 15]
             fields = []
@@ -218,13 +247,17 @@ class GitHub:
                 + " ".join(fields)
                 + " } }"
             )
-            data, _errors = self.graphql(query)
+            data, errors = self.graphql(query)
+            error_indexes = _alias_errors(errors, prefix="b")
             repository = data.get("repository") or {}
             for index, path in enumerate(chunk):
                 node = repository.get(f"b{index}") or {}
-                text = node.get("text")
-                texts[path] = text if isinstance(text, str) else ""
-        return texts
+                text = node.get("text") if isinstance(node, dict) else None
+                if index in error_indexes or not isinstance(text, str):
+                    failed.add(path)
+                    continue
+                texts[path] = text
+        return texts, failed
 
     def _path_commits(
         self,
@@ -264,9 +297,10 @@ class GitHub:
                     }
         return found
 
-    def list_skill_files(self, owner: str, repo: str, ref: str, skill_path: str) -> list[GitFile]:
-        ref_payload = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(ref)}")
-        commit_sha = str((ref_payload.get("object") or {}).get("sha") or "")
+    def list_skill_files(self, owner: str, repo: str, ref: str, skill_path: str, commit_sha: str | None = None) -> list[GitFile]:
+        if not commit_sha:
+            ref_payload = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(ref)}")
+            commit_sha = str((ref_payload.get("object") or {}).get("sha") or "")
         tree = self.request("GET", f"/repos/{owner}/{repo}/git/trees/{commit_sha}?recursive=1")
         if tree.get("truncated"):
             raise GitHubError(0, f"{owner}/{repo} 的目录树被截断")
@@ -276,7 +310,9 @@ class GitHub:
             path = str(item.get("path") or "")
             if item.get("type") != "blob" or not path.startswith(prefix):
                 continue
-            mode = "100755" if item.get("mode") == "100755" else "100644"
+            mode = git_blob_mode(str(item.get("mode") or ""))
+            if mode is None:
+                continue
             files.append(GitFile(path=path, mode=mode, sha=str(item.get("sha") or "")))
         return files
 
@@ -401,13 +437,13 @@ class GitHub:
         return self.request("GET", f"/repos/{owner}/{repo}/issues/{number}")
 
 
-def _alias_errors(errors: list[dict[str, Any]]) -> dict[int, str]:
+def _alias_errors(errors: list[dict[str, Any]], prefix: str = "c") -> dict[int, str]:
     failed: dict[int, str] = {}
     for error in errors:
         path = error.get("path") or []
         for part in path:
-            if isinstance(part, str) and part.startswith("c") and part[1:].isdigit():
-                failed[int(part[1:])] = str(error.get("message") or "比较失败")
+            if isinstance(part, str) and part.startswith(prefix) and part[len(prefix) :].isdigit():
+                failed[int(part[len(prefix) :])] = str(error.get("message") or "比较失败")
     return failed
 
 
@@ -448,6 +484,22 @@ def _frontmatter(text: str) -> tuple[str | None, str | None]:
 
 
 def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value.split("#", 1)[0].strip()
+    quote = ""
+    kept: list[str] = []
+    for char in value:
+        if quote:
+            kept.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            kept.append(char)
+            continue
+        if char == "#":
+            break
+        kept.append(char)
+    text = "".join(kept).strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        return text[1:-1]
+    return text

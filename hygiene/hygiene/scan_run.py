@@ -11,7 +11,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from hygiene.config import load_config
-from hygiene.decide import classify
+from hygiene.decide import classify, should_skip
 from hygiene.github_api import GitHub, GitHubError
 from hygiene.models import BranchInfo, Config, RepoSnapshot, Report
 from hygiene.render import badge_files, pending_selection, render_issue
@@ -38,11 +38,18 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
     report = classify(snapshots, config, scanned_at, _run_url())
     for name in sorted(wanted - names):
         report.errors.append(f"未找到仓库 {name}")
+    if wanted:
+        print("局部扫描不更新审阅单和状态卡片.")
+        print(
+            f"局部结果: 可删分支 {report.branch_total}, "
+            f"过期 Skill {report.skill_total}, 失败 {len(report.errors)}"
+        )
+        return 1 if report.errors else 0
     _write_outputs(report, badges_path)
     _publish_issue(writer, config, report, force_new, now)
     print(
-        f"扫描完成: 可删分支 {len(report.branches_deletable)}, "
-        f"过期 Skill {len(report.skills_outdated)}, 失败 {len(report.errors)}"
+        f"扫描完成: 可删分支 {report.branch_total}, "
+        f"过期 Skill {report.skill_total}, 失败 {len(report.errors)}"
     )
     return 1 if report.errors else 0
 
@@ -69,13 +76,7 @@ def _collect(reader: GitHub, config: Config, payloads: list[dict], wanted: set[s
 
 
 def _skip_fetch(snapshot: RepoSnapshot, config: Config) -> bool:
-    if snapshot.repo in config.ignored_repositories:
-        return True
-    if snapshot.fork and not config.include_forks:
-        return True
-    if snapshot.archived and not config.include_archived:
-        return True
-    return False
+    return should_skip(snapshot, config) is not None
 
 
 def _bare_snapshot(payload: dict) -> RepoSnapshot:
@@ -86,12 +87,15 @@ def _bare_snapshot(payload: dict) -> RepoSnapshot:
         default_branch=str(payload.get("default_branch") or "main"),
         archived=bool(payload.get("archived")),
         fork=bool(payload.get("fork")),
+        private=bool(payload.get("private")),
     )
 
 
 def _fetch(reader: GitHub, config: Config, payload: dict) -> RepoSnapshot:
     snapshot = _bare_snapshot(payload)
     print(f"正在扫描 {snapshot.owner}/{snapshot.repo}")
+    if int(payload.get("size") or 0) == 0:
+        return snapshot
     errors: list[str] = []
     branches: list[BranchInfo] = []
     pull_heads: list[str] = []
@@ -161,7 +165,7 @@ def _export_png(svg_path: Path, png_path: Path) -> None:
         print("未安装 rsvg-convert, 跳过 PNG 卡片.")
     except subprocess.CalledProcessError as error:
         detail = error.stderr.decode("utf-8", errors="replace")[:400]
-        raise RuntimeError(f"PNG 卡片渲染失败: {detail}") from error
+        print(f"PNG 卡片渲染失败, 继续更新审阅单: {detail}")
 
 
 def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bool, now: datetime) -> None:

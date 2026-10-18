@@ -20,7 +20,7 @@ GitHub README 不渲染仓库内的 SVG, 所以上面的徽标由 shields.io 读
 
 1. 创建一个 classic PAT, 勾选 `repo`. 细粒度令牌每次新建仓库都要再授权, 不适合扫全部仓库.
 2. 在本仓库 Settings -> Secrets and variables -> Actions 添加 `HYGIENE_TOKEN`.
-3. 打开 Actions 里的「仓库卫生扫描」, 手动运行.
+3. 打开 Actions 里的「仓库卫生扫描」, 手动运行. `repo_limit` 只在日志里看结果, 不会改正式审阅单和状态卡片.
 4. 在新的审阅单里勾选要处理的项.
 5. 给这张 Issue 加上 `apply` 标签. 只勾选不会执行.
 
@@ -31,7 +31,7 @@ GitHub README 不渲染仓库内的 SVG, 所以上面的徽标由 shields.io 读
 可删分支必须同时满足:
 
 - 不是默认分支, 也不是受保护分支
-- 不匹配 `main` / `master` / `develop` / `dev` / `gh-pages` / `release/*` / `dependabot/*` / `renovate/*`
+- 不匹配 `main` / `master` / `develop` / `dev` / `gh-pages` / `bilibili-token` / `release/*` / `dependabot/*` / `renovate/*`
 - 没有打开的拉取请求
 - 相对默认分支 `ahead = 0`
 
@@ -43,7 +43,7 @@ Skill 按目录名和 frontmatter 的 `name` 归组, 读 `metadata.version`. 最
 - `.dsh/skills`
 - `.codex/skills`
 
-fork 和归档仓库默认不扫. 可以在 [config.yml](./config.yml) 里改.
+fork、归档和私有仓库默认不扫, 避免公开审阅单带出私有仓库的名字和分支. 可以在 [config.yml](./config.yml) 里改. `bilibili-token` 是令牌分支, 永远不删.
 
 ## 工作流
 

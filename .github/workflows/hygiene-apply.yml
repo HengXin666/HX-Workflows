@@ -16,6 +16,7 @@ jobs:
   apply:
     if: >-
       github.event.label.name == 'apply' &&
+      contains(github.event.issue.labels.*.name, 'hygiene-report') &&
       github.event.sender.login == 'HengXin666' &&
       github.event.issue.pull_request == null
     runs-on: ubuntu-latest

@@ -17,7 +17,7 @@ def parse_version(value: str | None) -> tuple[int, ...] | None:
     parts = text.split(".")
     numbers: list[int] = []
     for part in parts:
-        if not part.isdigit():
+        if not part.isdecimal():
             return None
         numbers.append(int(part))
     return tuple(numbers)
@@ -39,6 +39,8 @@ def version_less(left: tuple[int, ...] | None, right: tuple[int, ...] | None) ->
 
 
 def version_equal(left: tuple[int, ...] | None, right: tuple[int, ...] | None) -> bool:
+    if left is None and right is None:
+        return True
     if left is None or right is None:
         return False
     width = max(len(left), len(right))
@@ -81,6 +83,7 @@ class Config:
     actor: str
     include_forks: bool
     include_archived: bool
+    include_private: bool
     skill_roots: tuple[str, ...]
     preferred_sources: tuple[str, ...]
     protected_branches: tuple[str, ...]
@@ -123,6 +126,7 @@ class RepoSnapshot:
     open_pr_heads: tuple[str, ...] = ()
     skills: tuple[SkillInstance, ...] = ()
     errors: tuple[str, ...] = ()
+    private: bool = False
 
 
 @dataclass(frozen=True)
@@ -177,6 +181,10 @@ class Report:
     repos_skipped_fork: int = 0
     repos_skipped_archived: int = 0
     repos_skipped_ignored: int = 0
+    repos_skipped_private: int = 0
+    branch_total: int = 0
+    skill_total: int = 0
+    diverged_total: int = 0
     branches_skipped_protected: int = 0
     branches_skipped_pr: int = 0
     branches_not_merged: int = 0

@@ -3,6 +3,7 @@ report_repository: HX-Workflows
 actor: HengXin666
 include_forks: false
 include_archived: false
+include_private: false
 skill_roots:
   - .agents/skills
   - .dsh/skills
@@ -15,6 +16,7 @@ protected_branches:
   - develop
   - dev
   - gh-pages
+  - bilibili-token
 protected_branch_globs:
   - release/*
   - dependabot/*

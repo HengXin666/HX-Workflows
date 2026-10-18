@@ -12,17 +12,50 @@ CHECK_LINE = re.compile(r"^- \[(?P<mark>[ xX])\] (?P<text>.*)$", re.M)
 ITEM_ID = re.compile(r"<!--id:(?P<id>[^>]+?)-->")
 DATA_START = "<!-- hygiene-data\n"
 DATA_END = "\n-->"
+ISSUE_LIMIT = 60000
 
 CARD_WIDTH = 640
 CARD_HEIGHT = 228
 
 
-def render_issue(report: Report) -> str:
+def one_line(value: object) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\r", " ").replace("\n", " ").replace("-->", "")
+    text = text.replace("`", "")
+    return " ".join(text.split())
+
+
+def render_issue(report: Report, limit: int = ISSUE_LIMIT) -> str:
+    while True:
+        body = _render_issue(report)
+        if len(body) <= limit:
+            return body
+        shrunk = False
+        for items, label in (
+            (report.branches_deletable, "可删分支"),
+            (report.skills_outdated, "过期 Skill"),
+            (report.skills_diverged, "同版本分叉"),
+            (report.skills_unversioned, "没有版本号"),
+            (report.skills_version_only, "仅版本号不同"),
+            (report.errors, "扫描失败"),
+        ):
+            if items:
+                items.pop()
+                note = f"{label}因审阅单长度被截断"
+                if note not in report.truncated:
+                    report.truncated.append(note)
+                shrunk = True
+                break
+        if not shrunk:
+            return body[: limit - 20] + "\n\n审阅单已截断.\n"
+
+
+def _render_issue(report: Report) -> str:
     lines = [
         "# 仓库卫生审阅",
         "",
         f"扫描时间: {report.scanned_at}",
-        f"扫描范围: 未归档且非 fork 的个人仓库. 运行记录: {report.run_url or '本地'}",
+        f"扫描范围: 未归档、非 fork、非私有的个人仓库. 运行记录: {one_line(report.run_url) or '本地'}",
         "",
         "勾选要处理的项, 然后给这张 Issue 加上 `apply` 标签. 只勾选不会执行.",
         "执行前会再检查一次. 分支必须仍然是完全合入默认分支, Skill 必须仍然低于权威版本.",
@@ -38,7 +71,8 @@ def render_issue(report: Report) -> str:
             commit = (item.commit_sha or "")[:7] or "-"
             note = "仅供参考" if item.reference_only else version
             lines.append(
-                f"| `{item.skill_name}` | {note} | `{item.repo}` | `{item.path}` | `{commit}` |"
+                f"| `{one_line(item.skill_name)}` | {one_line(note)} | `{one_line(item.repo)}` | "
+                f"`{one_line(item.path)}` | `{one_line(commit)}` |"
             )
     else:
         lines.append("| 无 | - | - | - | - |")
@@ -61,6 +95,7 @@ def render_issue(report: Report) -> str:
             f"- 跳过 fork: {report.repos_skipped_fork}",
             f"- 跳过归档: {report.repos_skipped_archived}",
             f"- 跳过忽略名单: {report.repos_skipped_ignored}",
+            f"- 跳过私有仓库: {report.repos_skipped_private}",
             f"- 跳过受保护分支: {report.branches_skipped_protected}",
             f"- 跳过仍有拉取请求的分支: {report.branches_skipped_pr}",
             f"- 还有未合入提交的分支: {report.branches_not_merged}",
@@ -75,7 +110,10 @@ def render_issue(report: Report) -> str:
         lines.extend(f"- {item}" for item in report.errors)
     lines.extend(["", "处理完成后, 成功的项会被勾上并注明已处理. 失败的项保持未勾选."])
     body = "\n".join(lines) + "\n"
-    return body + "\n" + DATA_START + json.dumps(issue_payload(report), ensure_ascii=False, sort_keys=True) + DATA_END + "\n"
+    payload = json.dumps(issue_payload(report), ensure_ascii=False, sort_keys=True)
+    if "-->" in payload:
+        payload = payload.replace("-->", "")
+    return body + "\n" + DATA_START + payload + DATA_END + "\n"
 
 
 def issue_payload(report: Report) -> dict[str, Any]:
@@ -85,11 +123,11 @@ def issue_payload(report: Report) -> dict[str, Any]:
     for finding in report.skills_outdated:
         items[finding.item_id] = {
             "kind": "skill",
-            "skill_name": finding.skill_name,
-            "canonical_repo": finding.canonical_repo,
-            "canonical_path": finding.canonical_path,
-            "canonical_version": finding.canonical_version,
-            "canonical_tree": finding.canonical_tree,
+            "skill_name": one_line(finding.skill_name),
+            "canonical_repo": one_line(finding.canonical_repo),
+            "canonical_path": one_line(finding.canonical_path),
+            "canonical_version": one_line(finding.canonical_version),
+            "canonical_tree": one_line(finding.canonical_tree),
         }
     return {"scanned_at": report.scanned_at, "items": items}
 
@@ -134,14 +172,22 @@ def unchecked_ids(body: str) -> list[str]:
     return found
 
 
-def mark_done(body: str, done_ids: set[str]) -> str:
+def mark_done(body: str, done_ids: set[str], failed_ids: set[str] | None = None) -> str:
+    failed = failed_ids or set()
+
     def replace(match: re.Match[str]) -> str:
         text = match.group("text")
         item = ITEM_ID.search(text)
-        if item is None or item.group("id") not in done_ids:
+        if item is None:
             return match.group(0)
-        suffix = "" if "已处理" in text else " （已处理）"
-        return f"- [x] {text}{suffix}"
+        item_id = item.group("id")
+        if item_id in done_ids:
+            suffix = "" if "已处理" in text else " （已处理）"
+            return f"- [x] {text}{suffix}"
+        if item_id in failed:
+            note = "" if "上次失败" in text else " （上次失败）"
+            return f"- [ ] {text}{note}"
+        return match.group(0)
 
     return CHECK_LINE.sub(replace, body)
 
@@ -151,8 +197,8 @@ def _branch_lines(items: list[BranchFinding]) -> list[str]:
         return ["没有可删除的分支."]
     return [
         (
-            f"- [ ] <!--id:{item.item_id}--> `{item.repo}` 的分支 `{item.branch}` "
-            f"已全部合入 `{item.default_branch}`, ahead {item.ahead}, behind {item.behind}"
+            f"- [ ] <!--id:{item.item_id}--> `{one_line(item.repo)}` 的分支 `{one_line(item.branch)}` "
+            f"已全部合入 `{one_line(item.default_branch)}`, ahead {item.ahead}, behind {item.behind}"
         )
         for item in items
     ]
@@ -165,9 +211,9 @@ def _skill_lines(items: list[SkillFinding]) -> list[str]:
     for item in items:
         warning = " 注意: 目标仓库的提交时间比权威副本新." if item.suspicious else ""
         lines.append(
-            f"- [ ] <!--id:{item.item_id}--> `{item.repo}` 的 `{item.skill_name}` "
-            f"{item.version or '无版本号'} -> {item.canonical_version or '无版本号'}, "
-            f"权威副本 `{item.canonical_repo}` `{item.canonical_path}`"
+            f"- [ ] <!--id:{item.item_id}--> `{one_line(item.repo)}` 的 `{one_line(item.skill_name)}` "
+            f"{one_line(item.version) or '无版本号'} -> {one_line(item.canonical_version) or '无版本号'}, "
+            f"权威副本 `{one_line(item.canonical_repo)}` `{one_line(item.canonical_path)}`"
             f"{warning}"
         )
     return lines
@@ -178,9 +224,9 @@ def _plain_skills(items: list[SkillFinding], suffix: str) -> list[str]:
         return ["无."]
     return [
         (
-            f"- `{item.repo}` 的 `{item.skill_name}` "
-            f"({item.version or '无版本号'}) 对比 `{item.canonical_repo}` "
-            f"({item.canonical_version or '无版本号'}). {suffix}"
+            f"- `{one_line(item.repo)}` 的 `{one_line(item.skill_name)}` "
+            f"({one_line(item.version) or '无版本号'}) 对比 `{one_line(item.canonical_repo)}` "
+            f"({one_line(item.canonical_version) or '无版本号'}). {suffix}"
         )
         for item in items
     ]
@@ -194,9 +240,9 @@ def badge_files(report: Report | None, failed: bool = False) -> dict[str, str]:
         scanned_at = None
         considered = None
     else:
-        branches = len(report.branches_deletable)
-        skills = len(report.skills_outdated)
-        diverged = len(report.skills_diverged)
+        branches = report.branch_total
+        skills = report.skill_total
+        diverged = report.diverged_total
         scanned_at = report.scanned_at
         considered = report.repos_considered
         failed = failed or bool(report.errors)
@@ -282,7 +328,12 @@ def _summary_svg(
 
 
 def _pill_svg(label: str, message: str, color: str) -> str:
-    fill = "#2ea44f" if color == "2ea44f" else "#d29922" if color == "d29922" else "#cf222e" if color == "red" else "#6e7781"
+    fill = {
+        "2ea44f": "#2ea44f",
+        "d29922": "#d29922",
+        "orange": "#d29922",
+        "red": "#cf222e",
+    }.get(color, "#6e7781")
     width = 280
     return f"""<svg xmlns="http://www.w3.org/2000/svg" width="{width}" height="28" viewBox="0 0 {width} 28" role="img" aria-label="{label}">
   <rect width="{width}" height="28" rx="6" fill="#f6f8fa"/>

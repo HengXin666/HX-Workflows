@@ -7,19 +7,43 @@ from pathlib import Path
 from hygiene.models import Config
 
 
+def _strip_comment(line: str) -> str:
+    quote = ""
+    kept: list[str] = []
+    for char in line:
+        if quote:
+            kept.append(char)
+            if char == quote:
+                quote = ""
+            continue
+        if char in {'"', "'"}:
+            quote = char
+            kept.append(char)
+            continue
+        if char == "#":
+            break
+        kept.append(char)
+    return "".join(kept).rstrip()
+
+
+def _unquote(value: str) -> str:
+    text = value.strip()
+    if len(text) >= 2 and text[0] == text[-1] and text[0] in {'"', "'"}:
+        return text[1:-1]
+    return text
+
+
 def _scalar(value: str) -> str | bool:
     if value in {"true", "false"}:
         return value == "true"
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
-    return value
+    return _unquote(value)
 
 
 def parse_config(text: str) -> Config:
     data: dict[str, object] = {}
     current: str | None = None
     for raw in text.splitlines():
-        line = raw.split("#", 1)[0].rstrip()
+        line = _strip_comment(raw)
         if not line.strip():
             continue
         if line.startswith("  - "):
@@ -27,7 +51,7 @@ def parse_config(text: str) -> Config:
                 raise ValueError(f"列表项没有对应的键: {line.strip()}")
             values = data[current]
             assert isinstance(values, list)
-            values.append(str(_scalar(line.strip()[2:].strip())))
+            values.append(_unquote(line.strip()[2:].strip()))
             continue
         if line.startswith(" ") or ":" not in line:
             raise ValueError(f"无法解析配置行: {line}")
@@ -35,9 +59,11 @@ def parse_config(text: str) -> Config:
         key, raw_value = line.split(":", 1)
         key = key.strip()
         raw_value = raw_value.strip()
-        if raw_value == "":
+        if key in data:
+            raise ValueError(f"配置重复键: {key}")
+        if raw_value in {"", "[]"}:
             data[key] = []
-            current = key
+            current = key if raw_value == "" else None
         else:
             data[key] = _scalar(raw_value)
 
@@ -68,6 +94,7 @@ def parse_config(text: str) -> Config:
         actor=text_value("actor"),
         include_forks=flag("include_forks", False),
         include_archived=flag("include_archived", False),
+        include_private=flag("include_private", False),
         skill_roots=roots,
         preferred_sources=words("preferred_sources"),
         protected_branches=words("protected_branches"),

@@ -3,14 +3,15 @@
 from __future__ import annotations
 
 import os
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from hygiene.config import load_config
-from hygiene.decide import is_protected_branch
+from hygiene.decide import canonical_changed, classify, is_protected_branch, should_skip
 from hygiene.github_api import GitHub, GitHubError
-from hygiene.models import Config, SkillInstance, parse_item_id, parse_version, version_less
+from hygiene.models import CanonicalSkill, Config, RepoSnapshot, SkillInstance, parse_item_id, parse_version, version_less
 from hygiene.render import extract_payload, mark_done, selected_ids, unchecked_ids
 from hygiene.trees import GitFile, plan_skill_replacement, safe_branch_name, safe_skill_dir
 
@@ -24,6 +25,8 @@ class SkillJob:
     path: str
     source_repo: str
     source_path: str
+    source_sha: str
+    target_sha: str
     summary: str
 
 
@@ -55,6 +58,17 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
     notes: list[str] = []
     done: set[str] = set()
     jobs: list[SkillJob] = []
+    live_cache: dict[str, CanonicalSkill] | None = None
+
+    def canonical_for(skill_name: str) -> CanonicalSkill | None:
+        nonlocal live_cache
+        if live_cache is None:
+            try:
+                live_cache = _live_canonicals(worker, config)
+            except GitHubError as error:
+                live_cache = {}
+                notes.append(f"- 无法重新确认权威副本, 这次不更新 Skill: {error}")
+        return live_cache.get(skill_name)
     for item_id in chosen:
         ref = parse_item_id(item_id)
         record = known.get(item_id) if isinstance(known, dict) else None
@@ -72,6 +86,16 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
             continue
         source_repo = str(record.get("canonical_repo") or "")
         source_path = str(record.get("canonical_path") or "")
+        skill_name = str(record.get("skill_name") or "")
+        live = canonical_for(skill_name)
+        if canonical_changed(source_repo, source_path, live):
+            if live is None or live.reference_only:
+                notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 当前权威副本已变化或无法确认, 请重新扫描.")
+                continue
+            notes.append(f"- `{ref.repo}` 的权威副本改为 `{live.repo}` `{live.path}`.")
+            source_repo = live.repo
+            source_path = live.path
+            record = {**record, "canonical_version": live.version or ""}
         if not source_repo or not safe_skill_dir(source_path, config.skill_roots):
             notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 审阅数据里没有合法的权威副本.")
             continue
@@ -95,8 +119,8 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         group_notes, group_done = _apply_skill_group(worker, config, issue_number, repository, group)
         notes.extend(group_notes)
         done.update(group_done)
-    updated = mark_done(body, done)
-    state = "closed" if not unchecked_ids(updated) else None
+    updated = mark_done(body, done, set(chosen) - done)
+    state = "closed" if not (set(chosen) - done) and not unchecked_ids(updated) else None
     writer.update_issue(owner, repo, issue_number, body=updated, state=state)
     writer.comment(owner, repo, issue_number, _comment(notes))
     print("\n".join(notes))
@@ -144,8 +168,10 @@ def _recheck_skill(
     try:
         source_default = str(worker.get_repo(config.owner, source_repo).get("default_branch") or "")
         target_default = str(worker.get_repo(config.owner, repo).get("default_branch") or "")
-        source = _one_skill(worker, config, source_repo, source_default, source_path)
-        target = _one_skill(worker, config, repo, target_default, path)
+        source_sha = worker.branch_tip(config.owner, source_repo, source_default)
+        target_sha = worker.branch_tip(config.owner, repo, target_default)
+        source = _one_skill(worker, config, source_repo, source_default, source_path, source_sha)
+        target = _one_skill(worker, config, repo, target_default, path, target_sha)
     except GitHubError as error:
         return (f"复查 `{repo}` `{path}` 失败: {error}", None)
     if source is None or target is None:
@@ -171,6 +197,8 @@ def _recheck_skill(
             path=path,
             source_repo=source_repo,
             source_path=source_path,
+            source_sha=source_sha,
+            target_sha=target_sha,
             summary=summary,
         ),
     )
@@ -182,8 +210,15 @@ def _one_skill(
     repo: str,
     default_branch: str,
     path: str,
+    commit_sha: str,
 ) -> SkillInstance | None:
-    skills, errors = worker.read_skills(config.owner, repo, default_branch, config.skill_roots)
+    skills, errors = worker.read_skills(
+        config.owner,
+        repo,
+        default_branch,
+        config.skill_roots,
+        commit_sha=commit_sha,
+    )
     if errors:
         raise GitHubError(0, "; ".join(errors))
     for skill in skills:
@@ -202,12 +237,24 @@ def _apply_skill_group(
     try:
         repository = worker.get_repo(config.owner, repo)
         default = str(repository.get("default_branch") or "")
+        prefix = f"hygiene/skills-{issue_number}-"
+        existing = [pull for pull in worker.open_pulls(config.owner, repo) if pull["ref"].startswith(prefix)]
+        if existing:
+            return ([f"- `{repo}` 已有未合入的卫生拉取请求 {existing[0]['url']}, 没有再开一个."], set())
+        expected = {job.target_sha for job in jobs}
+        if len(expected) != 1 or worker.branch_tip(config.owner, repo, default) != next(iter(expected)):
+            return ([f"- 拒绝更新 `{repo}`: 目标默认分支在复查后变了, 请重新扫描."], set())
+        target_sha = next(iter(expected))
         entries: list[dict] = []
         upload: dict[str, tuple[str, str]] = {}
         for job in jobs:
             source_default = str(worker.get_repo(config.owner, job.source_repo).get("default_branch") or "")
-            source_files = worker.list_skill_files(config.owner, job.source_repo, source_default, job.source_path)
-            target_files = worker.list_skill_files(config.owner, repo, default, job.path)
+            source_files = worker.list_skill_files(
+                config.owner, job.source_repo, source_default, job.source_path, commit_sha=job.source_sha
+            )
+            target_files = worker.list_skill_files(
+                config.owner, repo, default, job.path, commit_sha=target_sha
+            )
             remapped = [_remap(job.source_path, job.path, item) for item in source_files]
             for change in plan_skill_replacement(job.path, target_files, remapped):
                 if change.sha is None:
@@ -223,7 +270,11 @@ def _apply_skill_group(
             sha = entry.get("sha")
             if isinstance(sha, str) and sha in copied:
                 entry["sha"] = copied[sha]
+        if worker.branch_tip(config.owner, repo, default) != target_sha:
+            return ([f"- 拒绝更新 `{repo}`: 目标默认分支在复查后变了, 请重新扫描."], set())
         parent, base_tree = worker.default_commit_tree(config.owner, repo, default)
+        if parent != target_sha:
+            return ([f"- 拒绝更新 `{repo}`: 目标默认分支在复查后变了, 请重新扫描."], set())
         tree_sha = worker.create_tree(config.owner, repo, base_tree, entries)
         stamp = datetime.now(CST).strftime("%Y%m%d%H%M%S")
         branch = f"hygiene/skills-{issue_number}-{stamp}"
@@ -236,6 +287,11 @@ def _apply_skill_group(
         url = str(pull.get("html_url") or "")
         try:
             worker.merge_pull(config.owner, repo, number, message)
+            try:
+                worker.delete_branch(config.owner, repo, branch)
+            except GitHubError as error:
+                if error.status != 404:
+                    return ([f"- 已更新并合入 `{repo}`: {url}, 但临时分支删除失败: {error}"], {job.item_id for job in jobs})
         except GitHubError as error:
             return (
                 [f"- `{repo}` 已打开拉取请求 {url}, 但未能自动合入: {error}"],
@@ -264,6 +320,54 @@ def _by_repo(jobs: list[SkillJob]) -> dict[str, list[SkillJob]]:
     for job in jobs:
         grouped.setdefault(job.repo, []).append(job)
     return grouped
+
+
+def _live_canonicals(worker: GitHub, config: Config) -> dict[str, CanonicalSkill]:
+    payloads = worker.list_owner_repos(config.owner)
+
+    def one(payload: dict) -> RepoSnapshot:
+        snapshot = RepoSnapshot(
+            owner=config.owner,
+            repo=str(payload.get("name") or ""),
+            default_branch=str(payload.get("default_branch") or "main"),
+            archived=bool(payload.get("archived")),
+            fork=bool(payload.get("fork")),
+            private=bool(payload.get("private")),
+        )
+        if should_skip(snapshot, config) is not None or int(payload.get("size") or 0) == 0:
+            return snapshot
+        try:
+            skills, errors = worker.read_skills(
+                config.owner,
+                snapshot.repo,
+                snapshot.default_branch,
+                config.skill_roots,
+            )
+        except GitHubError as error:
+            return RepoSnapshot(
+                owner=snapshot.owner,
+                repo=snapshot.repo,
+                default_branch=snapshot.default_branch,
+                archived=snapshot.archived,
+                fork=snapshot.fork,
+                private=snapshot.private,
+                errors=(str(error),),
+            )
+        return RepoSnapshot(
+            owner=snapshot.owner,
+            repo=snapshot.repo,
+            default_branch=snapshot.default_branch,
+            archived=snapshot.archived,
+            fork=snapshot.fork,
+            private=snapshot.private,
+            skills=tuple(skills),
+            errors=tuple(errors),
+        )
+
+    with ThreadPoolExecutor(max_workers=4) as pool:
+        snapshots = list(pool.map(one, payloads))
+    report = classify(snapshots, config, "", "")
+    return {item.skill_name: item for item in report.canonical}
 
 
 def _comment(notes: list[str]) -> str:

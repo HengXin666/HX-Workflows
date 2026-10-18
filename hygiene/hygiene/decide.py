@@ -42,17 +42,33 @@ def _commit_rank(committed_at: str | None) -> str:
     return committed_at or ""
 
 
+def should_skip(snapshot: RepoSnapshot, config: Config) -> str | None:
+    if snapshot.repo in config.ignored_repositories:
+        return "ignored"
+    if snapshot.private and not config.include_private:
+        return "private"
+    if snapshot.fork and not config.include_forks:
+        return "fork"
+    if snapshot.archived and not config.include_archived:
+        return "archived"
+    return None
+
+
 def classify(snapshots: list[RepoSnapshot], config: Config, scanned_at: str, run_url: str) -> Report:
     report = Report(scanned_at=scanned_at, run_url=run_url)
     considered: list[RepoSnapshot] = []
     for snapshot in snapshots:
-        if snapshot.repo in config.ignored_repositories:
+        reason = should_skip(snapshot, config)
+        if reason == "ignored":
             report.repos_skipped_ignored += 1
             continue
-        if snapshot.fork and not config.include_forks:
+        if reason == "private":
+            report.repos_skipped_private += 1
+            continue
+        if reason == "fork":
             report.repos_skipped_fork += 1
             continue
-        if snapshot.archived and not config.include_archived:
+        if reason == "archived":
             report.repos_skipped_archived += 1
             continue
         considered.append(snapshot)
@@ -79,6 +95,8 @@ def _classify_branches(snapshots: list[RepoSnapshot], config: Config, report: Re
                 continue
             if branch.compare_error or branch.ahead is None:
                 report.branches_compare_failed += 1
+                safe_name = " ".join(branch.name.replace("\r", " ").replace("\n", " ").split())
+                report.errors.append(f"{snapshot.owner}/{snapshot.repo}: 分支 {safe_name} 比较失败")
                 continue
             if branch.ahead != 0:
                 report.branches_not_merged += 1
@@ -200,6 +218,9 @@ def _finding(skill_name: str, copy: SkillInstance, canonical: CanonicalSkill) ->
 
 
 def _truncate(report: Report) -> None:
+    report.branch_total = len(report.branches_deletable)
+    report.skill_total = len(report.skills_outdated)
+    report.diverged_total = len(report.skills_diverged)
     report.branches_deletable = _cap(report.branches_deletable, "可删分支", report)
     report.skills_outdated = _cap(report.skills_outdated, "过期 Skill", report)
     report.skills_diverged = _cap(report.skills_diverged, "同版本分叉", report)
@@ -216,3 +237,9 @@ def _cap(items: list, label: str, report: Report) -> list:
 
 def is_protected_branch(branch: str, config: Config) -> bool:
     return _protected(branch, config)
+
+
+def canonical_changed(recorded_repo: str, recorded_path: str, live: CanonicalSkill | None) -> bool:
+    if live is None or live.reference_only:
+        return True
+    return live.repo != recorded_repo or live.path != recorded_path

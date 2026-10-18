@@ -5,19 +5,22 @@ from __future__ import annotations
 import json
 import unittest
 
-from hygiene.config import parse_config
-from hygiene.decide import classify
+import hygiene.decide as decide_module
+from hygiene.config import load_config, parse_config
+from hygiene.decide import canonical_changed, classify
 from hygiene.github_api import _frontmatter, branch_ref_path
 from hygiene.models import (
     BranchInfo,
+    CanonicalSkill,
     Config,
     RepoSnapshot,
     SkillInstance,
     parse_item_id,
     parse_version,
+    version_equal,
 )
-from hygiene.render import badge_files, mark_done, pending_selection, render_issue, selected_ids
-from hygiene.trees import GitFile, plan_skill_replacement, safe_branch_name, safe_skill_dir
+from hygiene.render import badge_files, mark_done, one_line, pending_selection, render_issue, selected_ids, unchecked_ids
+from hygiene.trees import GitFile, git_blob_mode, plan_skill_replacement, safe_branch_name, safe_skill_dir
 
 
 def config() -> Config:
@@ -53,6 +56,7 @@ def snapshot(
     pulls: tuple[str, ...] = (),
     skills: tuple[SkillInstance, ...] = (),
     errors: tuple[str, ...] = (),
+    private: bool = False,
 ) -> RepoSnapshot:
     return RepoSnapshot(
         owner="HengXin666",
@@ -64,6 +68,7 @@ def snapshot(
         open_pr_heads=pulls,
         skills=skills,
         errors=errors,
+        private=private,
     )
 
 
@@ -141,6 +146,7 @@ class DecideTests(unittest.TestCase):
         )
         self.assertEqual(report.branches_deletable, [])
         self.assertEqual(report.branches_compare_failed, 1)
+        self.assertTrue(any("比较失败" in item for item in report.errors))
 
     def test_highest_version_wins_and_preferred_repo_breaks_ties(self) -> None:
         report = classify(
@@ -219,6 +225,11 @@ class ReviewTests(unittest.TestCase):
         self.assertIn("已处理", done)
         self.assertEqual(selected_ids(done), [])
         self.assertIn("hygiene-data", done)
+        failed = mark_done(checked, set(), set(chosen))
+        self.assertIn("- [ ] ", failed)
+        self.assertIn("上次失败", failed)
+        self.assertEqual(selected_ids(failed), [])
+        self.assertTrue(unchecked_ids(failed))
 
     def test_cards_cover_pending_clean_and_failed_scans(self) -> None:
         pending = badge_files(None)
@@ -277,6 +288,147 @@ class TreeTests(unittest.TestCase):
         self.assertEqual(parse_version(version), (2, 3))
         self.assertIsNone(parse_version("2.3-beta"))
         self.assertTrue(parse_version("2.10") > parse_version("2.9"))
+        self.assertIsNone(parse_version("2.²"))
+        self.assertTrue(version_equal(None, None))
+        name, version = _frontmatter('---\nname: hx-agent-notes # kept\nmetadata:\n  version: "2.3" # release\n---\n')
+        self.assertEqual(name, "hx-agent-notes")
+        self.assertEqual(version, "2.3")
+        self.assertEqual(git_blob_mode("120000"), "120000")
+        self.assertIsNone(git_blob_mode("160000"))
+
+
+class ReviewFixTests(unittest.TestCase):
+    def test_shipped_config_loads(self) -> None:
+        from pathlib import Path
+
+        loaded = load_config(Path(__file__).resolve().parents[1] / "config.yml")
+        self.assertEqual(loaded.ignored_repositories, ())
+        self.assertIn("bilibili-token", loaded.protected_branches)
+        self.assertFalse(loaded.include_private)
+
+    def test_quotes_comments_duplicates_and_bool_text(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+skill_roots:
+  - .agents/skills
+protected_branch_globs:
+  - "feature/#*"
+protected_branches:
+  - true
+ignored_repositories: []
+"""
+        )
+        self.assertEqual(loaded.protected_branch_globs, ("feature/#*",))
+        self.assertEqual(loaded.protected_branches, ("true",))
+        self.assertEqual(loaded.ignored_repositories, ())
+        with self.assertRaises(ValueError):
+            parse_config("owner: a\nowner: b\n")
+
+    def test_private_repo_is_not_scanned(self) -> None:
+        report = classify(
+            [snapshot("hidden", private=True, branches=(BranchInfo("old", protected=False, ahead=0, behind=1),))],
+            config(),
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.repos_skipped_private, 1)
+        self.assertEqual(report.branches_deletable, [])
+
+    def test_same_unversioned_tree_is_not_a_version_mismatch(self) -> None:
+        report = classify(
+            [
+                snapshot("a", skills=(skill("a", None, "same", committed_at="2026-10-18T00:00:00Z"),)),
+                snapshot("b", skills=(skill("b", None, "same", committed_at="2026-10-02T00:00:00Z"),)),
+                snapshot("c", skills=(skill("c", None, "other", committed_at="2026-10-01T00:00:00Z"),)),
+            ],
+            config(),
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.skills_version_only, [])
+        self.assertEqual([item.repo for item in report.skills_unversioned], ["c"])
+
+    def test_newline_cannot_forge_a_checked_item(self) -> None:
+        report = classify(
+            [
+                snapshot(
+                    "demo",
+                    branches=(
+                        BranchInfo(
+                            "feat\n- [x] <!--id:branch:HengXin666/demo:evil-->",
+                            protected=False,
+                            ahead=0,
+                            behind=1,
+                        ),
+                    ),
+                )
+            ],
+            config(),
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        body = render_issue(report)
+        self.assertFalse(any(line.startswith("- [x]") for line in body.splitlines()))
+        self.assertEqual(selected_ids(body), [])
+
+    def test_badge_uses_real_total_after_truncation(self) -> None:
+        snapshots = [
+            snapshot(f"repo{index}", branches=(BranchInfo(f"old{index}", protected=False, ahead=0, behind=1),))
+            for index in range(3)
+        ]
+        original = decide_module.SECTION_LIMIT
+        decide_module.SECTION_LIMIT = 1
+        try:
+            report = classify(snapshots, config(), "2026-10-18 18:00 +0800", "")
+        finally:
+            decide_module.SECTION_LIMIT = original
+        self.assertEqual(report.branch_total, 3)
+        self.assertEqual(len(report.branches_deletable), 1)
+        self.assertEqual(json.loads(badge_files(report)["branches.json"])["message"], "3")
+
+    def test_failed_scan_badge_is_orange(self) -> None:
+        report = classify([], config(), "2026-10-18 18:00 +0800", "")
+        report.errors.append("比较失败")
+        self.assertIn("#d29922", badge_files(report)["branches.svg"])
+
+    def test_canonical_change_requires_rescan(self) -> None:
+        live = CanonicalSkill(
+            "hx-agent-notes",
+            "HengXin666",
+            "other",
+            ".agents/skills/hx-agent-notes",
+            "3.0",
+            (3, 0),
+            "tree",
+            "abc",
+            "2026-10-18T00:00:00Z",
+            False,
+        )
+        self.assertTrue(canonical_changed("HXLoLi", ".agents/skills/hx-agent-notes", live))
+        self.assertFalse(canonical_changed("other", ".agents/skills/hx-agent-notes", live))
+        self.assertTrue(canonical_changed("other", ".agents/skills/hx-agent-notes", None))
+
+    def test_issue_shrinks_to_the_limit(self) -> None:
+        report = classify(
+            [
+                snapshot(
+                    "demo",
+                    branches=tuple(
+                        BranchInfo(f"branch-{index}-" + ("x" * 80), protected=False, ahead=0, behind=1)
+                        for index in range(8)
+                    ),
+                )
+            ],
+            config(),
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        body = render_issue(report, limit=1200)
+        self.assertLessEqual(len(body), 1200)
+
 
 
 if __name__ == "__main__":

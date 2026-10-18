@@ -20,6 +20,12 @@ class TreeChange:
     upload_sha: str | None
 
 
+def git_blob_mode(mode: str) -> str | None:
+    if mode in {"100644", "100755", "120000"}:
+        return mode
+    return None
+
+
 def _under(prefix: str, path: str) -> bool:
     return path == prefix or path.startswith(prefix.rstrip("/") + "/")
 
