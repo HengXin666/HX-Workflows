@@ -41,7 +41,7 @@ export type SiteReport = {
   scored: SiteResult[];
   failed: SiteResult[];
   missed: SiteResult[];
-  score: number;
+  score: number | null;
   verdict: Verdict;
   browser: string;
   capturedAt: string;

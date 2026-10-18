@@ -20,12 +20,12 @@ export function scorecardSvg(report: SiteReport): string {
     .join("");
   return [
     `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}" role="img">`,
-    `<title>HX Gate ${formatScore(report.score)} ${verdict}</title>`,
+    `<title>HX Gate ${showScore(report.score)} ${verdict}</title>`,
     `<rect width="${width}" height="${height}" fill="#f3efe6"/>`,
     `<rect x="16" y="16" width="${width - 32}" height="${height - 32}" fill="${PAPER}" stroke="${INK}"/>`,
     text(32, 48, "HX GATE", 13, MUTED),
     text(848, 48, "按检测站实测", 13, MUTED, "end"),
-    text(32, 100, formatScore(report.score), 48, INK),
+    text(32, 100, showScore(report.score), 48, INK),
     text(176, 88, verdict, 22, verdictColor),
     text(176, 112, `${report.scored.length} 站有结论 · ${report.failed.length} 站失败 · ${report.missed.length} 站未测`, 13, MUTED),
     rows,
@@ -64,6 +64,10 @@ function clip(value: string, max: number): string {
 
 export function formatScore(score: number): string {
   return (Math.round(score * 10) / 10).toFixed(1);
+}
+
+export function showScore(score: number | null): string {
+  return score === null ? "未测" : formatScore(score);
 }
 
 export function verdictLabel(verdict: Verdict): string {

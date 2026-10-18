@@ -36,7 +36,7 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
     const headless = text.match(/(\d+)% headless/i);
     const like = text.match(/(\d+)% like headless/i);
     const stealth = text.match(/(\d+)% stealth/i);
-    if (!headless && !like) return missed(base, "还没算出 headless 比例");
+    if (!headless || !like) return missed(base, "还没算出 headless 和 like headless");
     const headlessPct = headless ? Number(headless[1]) : 100;
     const score = Math.max(0, 100 - headlessPct);
     const fp = text.match(/FP ID:\s*([a-f0-9]+)/i);
@@ -65,8 +65,9 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
   browserscan: (base, text) => {
     const auth = text.match(/fingerprint authenticity:\s*(\d+)%/i);
     const botYes = /bot detection:\s*yes/i.test(text);
-    if (!auth && !botYes) return missed(base, "没有进入检测结果");
-    const score = auth ? Number(auth[1]) : 0;
+    const botNo = /bot detection:\s*no/i.test(text);
+    if (!botYes && !botNo) return missed(base, "没有看到 Bot Detection 结论");
+    const score = auth ? Number(auth[1]) : botYes ? 0 : 100;
     return scored(base, score, botYes ? "fail" : "pass", botYes ? "Bot Detection: Yes" : "Bot Detection: No", [
       auth ? `真实度 ${auth[1]}%` : "",
       /chrome headless/i.test(text) ? "Chrome Headless" : "",
@@ -78,7 +79,9 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
     if (!finished || article && !/scan (complete|finished)|detection result/i.test(text)) {
       return missed(base, "打开了检测页，扫描没有完成");
     }
-    const inconsistent = /inconsistent/i.test(text);
+    const inconsistent = /\binconsistent\b/i.test(text);
+    const consistent = /\bconsistent\b/i.test(text) && !inconsistent;
+    if (!inconsistent && !consistent) return missed(base, "没有看到一致性结论");
     return scored(base, inconsistent ? 0 : 100, inconsistent ? "fail" : "pass", inconsistent ? "Inconsistent" : "Consistent", []);
   },
   deviceinfo: (base, text) => {
@@ -89,12 +92,12 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
     return missed(base, "没有看到是不是机器人");
   },
   "browserleaks-webrtc": (base, text) => {
+    if (/local ip address\s+(?!-|\?|n\/a)([0-9.]+)/i.test(text)) {
+      return scored(base, 0, "fail", "漏了本地地址", []);
+    }
     if (/no leak/i.test(text)) {
       const ip = text.match(/Public IP Address\s+([0-9.]+)/i);
       return scored(base, 100, "pass", "No Leak", [ip ? `公网 ${ip[1]}` : ""]);
-    }
-    if (/local ip address\s+(?!-|\?|n\/a)([0-9.]+)/i.test(text)) {
-      return scored(base, 0, "fail", "漏了本地地址", []);
     }
     return missed(base, "泄漏测试还没出结果");
   },

@@ -101,7 +101,7 @@ def _visit(context, site: dict, browser_label: str) -> dict:
                 const count = (sel) => document.querySelectorAll(sel).length;
                 return {
                     title: document.title,
-                    excerpt: text.slice(0, 3500),
+                    excerpt: text.slice(0, 12000),
                     passed: count(".passed, .pass, td.ok, .success"),
                     failed: count(".failed, td.failed, .fail"),
                     ua: navigator.userAgent,

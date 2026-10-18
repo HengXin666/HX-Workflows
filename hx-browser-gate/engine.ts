@@ -7,7 +7,7 @@ export function scoreVisits(visits: RawVisit[], meta: { browser?: string; captur
   const scored = results.filter((result) => result.kind === "score" && result.score !== null);
   const failed = scored.filter((result) => result.verdict === "fail");
   const missed = results.filter((result) => result.kind === "miss");
-  const score = scored.length === 0 ? 0 : scored.reduce((sum, result) => sum + (result.score ?? 0), 0) / scored.length;
+  const score = scored.length === 0 ? null : scored.reduce((sum, result) => sum + (result.score ?? 0), 0) / scored.length;
   return {
     results,
     scored,
@@ -20,9 +20,9 @@ export function scoreVisits(visits: RawVisit[], meta: { browser?: string; captur
   };
 }
 
-function gate(failed: number, missed: number, scored: number, score: number): Verdict {
+function gate(failed: number, missed: number, scored: number, score: number | null): Verdict {
   if (failed > 0) return "block";
   if (scored === 0 || missed > 0) return "incomplete";
-  if (score < GATE_MIN) return "block";
+  if (score !== null && score < GATE_MIN) return "block";
   return "pass";
 }

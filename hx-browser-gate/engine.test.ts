@@ -71,6 +71,18 @@ test("any failed site blocks even if another site is clean", () => {
   assert.equal(report.failed.length, 1);
 });
 
+test("CreepJS without like headless is not a pass", () => {
+  const result = interpret(visit("creepjs", "20% headless"));
+  assert.equal(result.kind, "miss");
+  assert.equal(result.score, null);
+});
+
+test("a round with no concluded site is not scored zero", () => {
+  const report = scoreVisits([visit("pixelscan", "still loading")]);
+  assert.equal(report.score, null);
+  assert.equal(report.verdict, "incomplete");
+});
+
 test("Clearcote coherence score is the site's number", () => {
   const result = interpret(
     visit("clearcote", "Audit complete. Coherence score 99 of 100. 161 of 163 scored checks agree. Coherent"),

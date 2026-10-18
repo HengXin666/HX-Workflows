@@ -1,6 +1,6 @@
 import { readFileSync, writeFileSync } from "node:fs";
 import { scoreVisits } from "./engine.ts";
-import { formatScore, scorecardSvg, verdictLabel } from "./svg.ts";
+import { formatScore, scorecardSvg, showScore, verdictLabel } from "./svg.ts";
 import type { RawVisit } from "./types.ts";
 
 const noFail = process.argv.includes("--no-fail");
@@ -18,9 +18,9 @@ for (const result of report.results) {
   const score = result.score === null ? "    —" : formatScore(result.score).padStart(5);
   console.log(`${score}  ${result.verdict.padEnd(11)}  ${result.name}  ${result.headline}`);
 }
-console.log(`${formatScore(report.score)}  ${verdictLabel(report.verdict)}`);
+console.log(`${showScore(report.score)}  ${verdictLabel(report.verdict)}`);
 console.log("RESULT " + JSON.stringify({
-  score: Math.round(report.score * 10) / 10,
+  score: report.score === null ? null : Math.round(report.score * 10) / 10,
   verdict: report.verdict,
   rows: report.results.map((result) => ({
     siteId: result.siteId,

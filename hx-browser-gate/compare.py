@@ -4,7 +4,7 @@ Stock cells launch Google Chrome or Firefox directly. Those are the control:
 headed and headless, on the virtual desktop the workflow starts.
 
 hx cells start the hx-browser service and open one kernel, headed or headless.
-A missing kernel is written as available=false. That is not a score.
+See .agents/notes/implemented/feature/2026-10-18-hxbrowser-site-gate.md.
 
     python compare.py --group stock --browser chrome --headed --out cell.json
     python compare.py --group hx --kernel cloak --headless --out cell.json
@@ -114,8 +114,14 @@ def _hx(kernel: str, headed: bool, label: str) -> dict:
         try:
             started = _http("POST", f"/environments/{env_id}/start")
             if started.get("code") != 0:
-                return _missing(label, json.dumps(started, ensure_ascii=False)[:500])
-            cdp = started["data"].get("cdp_http") or f"http://127.0.0.1:{started['data']['debug_port']}"
+                return _gap(label, json.dumps(started, ensure_ascii=False)[:500])
+            runtime = (started.get("data") or {}).get("runtime") or {}
+            if kernel in GECKO:
+                return _gap(label, "firefox/librewolf 不是 Chromium CDP，这一格还没接上，不是没安装。", "unmeasured")
+            port = runtime.get("debug_port")
+            cdp = runtime.get("cdp_http") or (f"http://127.0.0.1:{port}" if port else "")
+            if not cdp:
+                return _gap(label, "启动了，但响应里没有调试地址", "unmeasured")
             from playwright.sync_api import sync_playwright
 
             with sync_playwright() as playwright:
@@ -125,11 +131,16 @@ def _hx(kernel: str, headed: bool, label: str) -> dict:
             payload["available"] = True
             payload["group"] = "hx"
             payload["kernel"] = kernel
-            payload["headed"] = headed
+            payload["headed"] = bool(runtime.get("display"))
+            payload["requestedHeaded"] = headed
+            payload["visible"] = bool(runtime.get("visible"))
             return payload
         finally:
-            _http("POST", f"/environments/{env_id}/stop")
-            _http("DELETE", f"/environments/{env_id}")
+            for method, path in (("POST", f"/environments/{env_id}/stop"), ("DELETE", f"/environments/{env_id}")):
+                try:
+                    _http(method, path)
+                except Exception:
+                    pass
     finally:
         if proc is not None:
             proc.terminate()
@@ -172,15 +183,19 @@ def _which(names: tuple[str, ...]) -> str:
     return ""
 
 
-def _missing(label: str, error: str) -> dict:
+def _gap(label: str, error: str, status: str = "missing") -> dict:
     return {
         "capturedAt": "",
         "browser": label,
         "available": False,
+        "status": status,
         "error": error,
         "visits": [],
-        "note": "这个内核不在 runner 上，单元格是未测，不是 0 分。",
+        "note": "未安装和未测都不是 0 分。",
     }
+
+
+_missing = _gap
 
 
 if __name__ == "__main__":
