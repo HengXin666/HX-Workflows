@@ -95,15 +95,21 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         source_path = str(record.get("canonical_path") or "")
         skill_name = str(record.get("skill_name") or "")
         live, blocked = canonical_for(skill_name)
-        chosen_source = skill_source_after_rescan(source_repo, source_path, live, blocked)
+        reviewed_version = str(record.get("canonical_version") or "")
+        chosen_source = skill_source_after_rescan(
+            source_repo,
+            source_path,
+            reviewed_version,
+            live,
+            blocked,
+        )
         if chosen_source is None:
-            reason = "权威副本确认不完整, 请重新扫描" if blocked else "当前权威副本已变化或无法确认, 请重新扫描"
+            reason = "权威副本确认不完整, 请重新扫描" if blocked else "当前权威副本低于审阅版本或无法确认, 请重新扫描"
             notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: {reason}.")
             continue
         if chosen_source != (source_repo, source_path):
             notes.append(f"- `{ref.repo}` 的权威副本改为 `{chosen_source[0]}` `{chosen_source[1]}`.")
             source_repo, source_path = chosen_source
-            record = {**record, "canonical_version": (live.version if live is not None else "") or ""}
         if not source_repo or not safe_skill_dir(source_path, config.skill_roots):
             notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 审阅数据里没有合法的权威副本.")
             continue

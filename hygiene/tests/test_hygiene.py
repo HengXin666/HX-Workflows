@@ -408,14 +408,29 @@ ignored_repositories: []
             False,
         )
         self.assertIsNone(
-            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", lower, True)
+            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", "5.0", lower, True)
+        )
+        self.assertIsNone(
+            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", "5.0", lower, False)
+        )
+        higher = CanonicalSkill(
+            "hx-agent-notes",
+            "HengXin666",
+            "other",
+            ".agents/skills/hx-agent-notes",
+            "6.0",
+            (6, 0),
+            "tree",
+            "abc",
+            "2026-10-18T00:00:00Z",
+            False,
         )
         self.assertEqual(
-            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", lower, False),
+            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", "5.0", higher, False),
             ("other", ".agents/skills/hx-agent-notes"),
         )
         self.assertEqual(
-            skill_source_after_rescan("other", ".agents/skills/hx-agent-notes", lower, False),
+            skill_source_after_rescan("other", ".agents/skills/hx-agent-notes", "2.5", lower, False),
             ("other", ".agents/skills/hx-agent-notes"),
         )
 

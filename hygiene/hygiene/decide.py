@@ -13,6 +13,7 @@ from hygiene.models import (
     SkillFinding,
     SkillInstance,
     branch_id,
+    parse_version,
     skill_id,
     version_equal,
     version_less,
@@ -242,15 +243,20 @@ def is_protected_branch(branch: str, config: Config) -> bool:
 def skill_source_after_rescan(
     recorded_repo: str,
     recorded_path: str,
+    recorded_version: str | None,
     live: CanonicalSkill | None,
     incomplete: bool,
 ) -> tuple[str, str] | None:
     """Return the source to copy, or None when the update must be refused.
 
-    An incomplete rescan must not promote a successfully read lower copy.
+    An incomplete rescan must not promote another copy. A new source also
+    cannot be below the version the review already approved.
     """
 
     if incomplete or live is None or live.reference_only:
+        return None
+    reviewed = parse_version(recorded_version)
+    if reviewed is not None and version_less(live.parsed_version, reviewed):
         return None
     if live.repo != recorded_repo or live.path != recorded_path:
         return live.repo, live.path
