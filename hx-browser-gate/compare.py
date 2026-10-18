@@ -95,7 +95,7 @@ def _hx(kernel: str, headed: bool, label: str) -> dict:
         return _missing(label, "没有 kernel")
     root = hx_root()
     if not (root / "run.py").is_file():
-        return _missing(label, "没有 HX-Browser 源码。公开工作流要在 HX-Workflows 配 secret JUNGLE_TOKEN 才能拉私有仓。")
+        return _missing(label, "没有 HX-Browser 源码。公开工作流复用 HX-Workflows 的 secret HYGIENE_TOKEN 拉私有仓。")
     proc = _serve(root)
     try:
         if proc is None:

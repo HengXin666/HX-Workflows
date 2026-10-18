@@ -3,7 +3,7 @@ name: hx-browser site gate
 # 跑在公开仓，不占 HX-Jungle 的私有 Actions 额度。
 # 虚拟桌面（Xvfb）上的对照：
 #   本机 Google Chrome / Firefox，有头、无头
-#   hx-browser 的每个内核，有头、无头（需要 secret JUNGLE_TOKEN 拉私有仓）
+#   hx-browser 的每个内核，有头、无头（复用 secret HYGIENE_TOKEN 拉私有仓）
 # 火绒是安全软件，不是浏览内核，所以第二列对照是火狐。
 # 缺内核或拉不到私有仓时记「未安装」，不当成 0 分。
 
@@ -59,35 +59,46 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.12"
-      - name: 虚拟桌面和本机浏览器
+      - name: 虚拟桌面
+        run: sudo apt-get update && sudo apt-get install -y xvfb xauth wget
+      - name: 本机谷歌
+        if: matrix.cell.browser == 'chrome'
         run: |
-          sudo apt-get update
-          sudo apt-get install -y xvfb xauth wget
+          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
+          sudo apt-get install -y /tmp/chrome.deb || sudo apt-get -f install -y
+      - name: 本机火狐
+        if: matrix.cell.browser == 'firefox'
+        run: |
           sudo install -d -m 0755 /etc/apt/keyrings
           wget -q https://packages.mozilla.org/apt/repo-signing-key.gpg -O- | sudo tee /etc/apt/keyrings/packages.mozilla.org.asc > /dev/null
           echo "deb [signed-by=/etc/apt/keyrings/packages.mozilla.org.asc] https://packages.mozilla.org/apt mozilla main" | sudo tee /etc/apt/sources.list.d/mozilla.list > /dev/null
           printf 'Package: *\nPin: origin packages.mozilla.org\nPin-Priority: 1000\n' | sudo tee /etc/apt/preferences.d/mozilla > /dev/null
           sudo apt-get update
           sudo apt-get install -y firefox
-          wget -q -O /tmp/chrome.deb https://dl.google.com/linux/direct/google-chrome-stable_current_amd64.deb
-          sudo apt-get install -y /tmp/chrome.deb || sudo apt-get -f install -y
       - name: Python 依赖
-        run: pip install fastapi 'uvicorn[standard]' websockets pydantic httpx markdown playwright
+        run: pip install playwright
+      - name: hx-browser 依赖
+        if: matrix.cell.group == 'hx'
+        run: pip install fastapi 'uvicorn[standard]' websockets pydantic httpx markdown
       - name: 拉私有仓里的 HX-Browser
         id: jungle
+        if: matrix.cell.group == 'hx'
         env:
-          TOKEN: ${{ secrets.JUNGLE_TOKEN }}
+          HYGIENE_TOKEN: ${{ secrets.HYGIENE_TOKEN }}
           REF: ${{ github.event.inputs.jungle_ref || 'main' }}
         run: |
-          if [ -z "$TOKEN" ]; then
+          if [ -z "$HYGIENE_TOKEN" ]; then
             echo "root=" >> "$GITHUB_OUTPUT"
-            echo "没有 JUNGLE_TOKEN，hx 内核记未测"
+            echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可读取全部仓库的 classic PAT, 权限勾选 repo."
             exit 0
           fi
-          echo "::add-mask::$TOKEN"
-          git clone --depth 1 --branch "$REF" \
-            "https://x-access-token:${TOKEN}@github.com/HengXin666/HX-Jungle.git" \
+          export GIT_CONFIG_COUNT=1
+          export GIT_CONFIG_KEY_0=http.extraheader
+          export GIT_CONFIG_VALUE_0="AUTHORIZATION: bearer ${HYGIENE_TOKEN}"
+          git clone --depth 1 --filter=blob:none --sparse --branch "$REF" \
+            https://github.com/HengXin666/HX-Jungle.git \
             "$RUNNER_TEMP/jungle"
+          git -C "$RUNNER_TEMP/jungle" sparse-checkout set services/hx-browser
           echo "root=$RUNNER_TEMP/jungle/services/hx-browser" >> "$GITHUB_OUTPUT"
       - name: 打开检测站
         env:

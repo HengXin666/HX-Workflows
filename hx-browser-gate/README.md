@@ -37,7 +37,7 @@ node services/hx-browser/gate/score.ts /tmp/sites.json /tmp/scorecard.svg
 对照不在私有仓 HX-Jungle 里跑，那边 Actions 额度不够。流水线在公开仓 [HX-Workflows](https://github.com/HengXin666/HX-Workflows) 的虚拟桌面（Xvfb）上开同一组检测站。两排：
 
 1. 本机浏览器，不走指纹：Google Chrome、Firefox（火狐）。各有头、无头。火绒是安全软件，不是浏览内核，所以没有火绒这一列。
-2. hx-browser 的每个内核（cloak、chrome、chromium、edge、brave、firefox、librewolf），各有头、无头。要在 HX-Workflows 配 secret `JUNGLE_TOKEN`（能读 HX-Jungle 的 PAT）才拉得动指纹浏览器。没有这个 secret，或者 runner 上没有那个二进制，格子写未安装，不算 0 分。
+2. hx-browser 的每个内核（cloak、chrome、chromium、edge、brave、firefox、librewolf），各有头、无头。拉私有仓复用 HX-Workflows 已有的 secret `HYGIENE_TOKEN`，和仓库卫生扫描同一份凭证，不另建。只取 `services/hx-browser`。没有这个 secret，或者 runner 上没有那个二进制，格子写未安装，不算 0 分。
 
 有头和无头都套在 Xvfb 里，这样有头不是「没有显示器就退回无头」。
 
