@@ -385,9 +385,12 @@ skill_roots:
         self.assertEqual(report.repos_skipped_stale, 1)
         self.assertEqual(report.branch_total, 1)
         report.apply_url = "https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-apply.yml"
+        report.issue_number = 4
         body = render_issue(report)
         self.assertIn("包含私有仓库", body)
         self.assertIn(report.apply_url, body)
+        self.assertIn("也就是这张 #4", body)
+        self.assertIn("也可以把编号填成 `4`", body)
 
     def test_private_skill_is_not_copied_out_as_canonical(self) -> None:
         loaded = parse_config(

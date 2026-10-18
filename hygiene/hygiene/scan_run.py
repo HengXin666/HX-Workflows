@@ -231,7 +231,6 @@ def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bo
     repo = config.report_repository
     writer.ensure_label(owner, repo, "hygiene-report", "1f6feb", "仓库卫生审阅单")
     writer.ensure_label(owner, repo, "apply", "d29922", "执行已勾选的仓库卫生修复")
-    body = render_issue(report)
     title = f"仓库卫生审阅 {now.strftime('%Y-%m-%d %H:%M')}"
     existing = writer.list_open_report_issues(owner, repo)
     if force_new:
@@ -239,12 +238,10 @@ def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bo
             number = int(issue["number"])
             writer.comment(owner, repo, number, "已由新的审阅单取代.")
             writer.update_issue(owner, repo, number, state="closed")
-        created = writer.create_issue(owner, repo, title, body)
-        print(f"已新建审阅单: {created.get('html_url')}")
+        _create_report(writer, owner, repo, title, report)
         return
     if not existing:
-        created = writer.create_issue(owner, repo, title, body)
-        print(f"已新建审阅单: {created.get('html_url')}")
+        _create_report(writer, owner, repo, title, report)
         return
     current = max(existing, key=lambda item: int(item["number"]))
     number = int(current["number"])
@@ -258,8 +255,18 @@ def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bo
         )
         print(f"保留现有审阅单: {current.get('html_url')}")
         return
-    writer.update_issue(owner, repo, number, body=body)
+    report.issue_number = number
+    writer.update_issue(owner, repo, number, body=render_issue(report))
     print(f"已更新审阅单: {current.get('html_url')}")
+
+
+def _create_report(writer: GitHub, owner: str, repo: str, title: str, report: Report) -> None:
+    created = writer.create_issue(owner, repo, title, render_issue(report))
+    number = int(created.get("number") or 0)
+    if number:
+        report.issue_number = number
+        writer.update_issue(owner, repo, number, body=render_issue(report))
+    print(f"已新建审阅单: {created.get('html_url')}")
 
 
 def _print_quota(reader: GitHub) -> None:
