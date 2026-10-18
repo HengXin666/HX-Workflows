@@ -15,7 +15,7 @@ from hygiene.decide import classify, is_protected_branch, should_skip, skill_sou
 from hygiene.github_api import GitHub, GitHubError
 from hygiene.local_git import GitCloneError, LocalRepo
 from hygiene.models import CanonicalSkill, Config, RepoSnapshot, SkillInstance, parse_item_id, parse_version, version_less
-from hygiene.render import extract_payload, mark_done, selected_ids, unchecked_ids
+from hygiene.render import extract_payload, mark_done, selected_ids
 from hygiene.trees import GitFile, plan_skill_replacement, safe_branch_name, safe_skill_dir
 
 CST = timezone(timedelta(hours=8))
@@ -163,7 +163,7 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
             notes.extend(group_notes)
             done.update(group_done)
         updated = mark_done(body, done, set(chosen) - done)
-        state = "closed" if not (set(chosen) - done) and not unchecked_ids(updated) else None
+        state = "closed" if chosen and not (set(chosen) - done) else None
         writer.update_issue(owner, repo, issue_number, body=updated, state=state)
         writer.comment(owner, repo, issue_number, _comment(notes))
         print("\n".join(notes))
@@ -322,7 +322,7 @@ def _apply_skill_group(
         tree_sha = worker.create_tree(config.owner, repo, base_tree, entries)
         stamp = datetime.now(CST).strftime("%Y%m%d%H%M%S")
         branch = f"hygiene/skills-{issue_number}-{stamp}"
-        message = "更新过期 Skill"
+        message = _skill_commit_message(jobs)
         commit = worker.create_commit(config.owner, repo, message, tree_sha, parent)
         worker.create_branch(config.owner, repo, branch, commit)
         body = "由仓库卫生审阅单执行.\n\n" + "\n".join(f"- {job.summary}" for job in jobs)
@@ -344,6 +344,20 @@ def _apply_skill_group(
         return ([f"- 已更新并合入 `{repo}`: {url}"], {job.item_id for job in jobs})
     except (GitHubError, GitCloneError) as error:
         return ([f"- 更新 `{repo}` 失败: {error}"], set())
+
+
+def _skill_commit_message(jobs: list[SkillJob]) -> str:
+    paths: list[str] = []
+    for job in jobs:
+        path = job.path.strip("/")
+        if path and path not in paths:
+            paths.append(path)
+    leaves = [path.rsplit("/", 1)[-1] for path in paths]
+    shown = [path if leaves.count(leaf) > 1 else leaf for path, leaf in zip(paths, leaves)]
+    listed = ", ".join(shown) or "Skill"
+    if len(listed) > 72:
+        listed = listed[:69] + "..."
+    return f"fix(skills): 更新 {listed}"
 
 
 def _remap(source_prefix: str, target_prefix: str, item: GitFile) -> GitFile:

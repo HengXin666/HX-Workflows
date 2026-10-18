@@ -15,13 +15,16 @@ import hygiene.decide as decide_module
 from hygiene.config import load_config, parse_config
 from hygiene.decide import classify, skill_source_after_rescan
 from hygiene.github_api import _frontmatter, branch_ref_path
-from hygiene.apply_run import RepoCache
+from hygiene.apply_run import RepoCache, SkillJob, _skill_commit_message
+from hygiene.github_api import GitHubError
+from hygiene.scan_run import _create_report, _publish_issue, _write_report_json
 from hygiene.local_git import GitCloneError, LocalRepo, clone_args, git_env
 from hygiene.models import (
     BranchInfo,
     CanonicalSkill,
     Config,
     RepoSnapshot,
+    Report,
     SkillInstance,
     parse_item_id,
     parse_version,
@@ -385,9 +388,12 @@ skill_roots:
         self.assertEqual(report.repos_skipped_stale, 1)
         self.assertEqual(report.branch_total, 1)
         report.apply_url = "https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-apply.yml"
+        report.issue_number = 4
         body = render_issue(report)
         self.assertIn("包含私有仓库", body)
         self.assertIn(report.apply_url, body)
+        self.assertIn("也就是这张 #4", body)
+        self.assertIn("也可以把编号填成 `4`", body)
 
     def test_private_skill_is_not_copied_out_as_canonical(self) -> None:
         loaded = parse_config(
@@ -620,6 +626,84 @@ class LocalGitTests(unittest.TestCase):
             self.assertEqual(errors, [])
             self.assertEqual(skills[0].version, "2.0")
             self.assertEqual(skills[0].folder, "hx-agent-notes")
+
+
+class ReviewFollowupTests(unittest.TestCase):
+    def test_same_skill_name_keeps_distinct_paths(self) -> None:
+        jobs = [
+            SkillJob("a", "demo", ".agents/skills/foo", "src", ".agents/skills/foo", "1", "2", "a"),
+            SkillJob("b", "demo", ".codex/skills/foo", "src", ".codex/skills/foo", "1", "2", "b"),
+            SkillJob("c", "demo", ".agents/skills/bar", "src", ".agents/skills/bar", "1", "2", "c"),
+        ]
+        message = _skill_commit_message(jobs)
+        self.assertIn(".agents/skills/foo", message)
+        self.assertIn(".codex/skills/foo", message)
+        self.assertIn("bar", message)
+        self.assertNotIn(".agents/skills/bar", message)
+
+    def test_create_report_retries_until_the_number_is_written(self) -> None:
+        writer = _Writer(fail_updates=2)
+        report = Report(scanned_at="t", run_url="", apply_url="https://example/apply")
+        _create_report(writer, "HengXin666", "HX-Workflows", "审阅", report)
+        self.assertEqual(report.issue_number, 9)
+        self.assertEqual(writer.updates, 1)
+        self.assertIn("#9", writer.bodies[0])
+        self.assertEqual(report.errors, [])
+
+    def test_create_report_comments_the_number_when_updates_fail(self) -> None:
+        writer = _Writer(fail_updates=3)
+        report = Report(scanned_at="t", run_url="", apply_url="https://example/apply")
+        _create_report(writer, "HengXin666", "HX-Workflows", "审阅", report)
+        self.assertEqual(writer.updates, 0)
+        self.assertIn("#9", writer.comments[0][1])
+        self.assertTrue(report.errors)
+
+    def test_kept_issue_number_is_written_to_the_report(self) -> None:
+        writer = _Writer()
+        writer.issues = [
+            {
+                "number": 4,
+                "html_url": "https://example/4",
+                "body": "- [x] <!--id:branch:HengXin666/demo:old--> 旧分支",
+            }
+        ]
+        report = Report(scanned_at="t", run_url="")
+        _publish_issue(writer, config(), report, False, datetime(2026, 10, 18, tzinfo=timezone.utc))
+        self.assertEqual(report.issue_number, 4)
+        self.assertEqual(writer.updates, 0)
+        with tempfile.TemporaryDirectory() as directory:
+            _write_report_json(report, Path(directory) / "badges")
+            saved = json.loads((Path(directory) / "output" / "report.json").read_text(encoding="utf-8"))
+        self.assertEqual(saved["issue_number"], 4)
+
+
+class _Writer:
+    def __init__(self, fail_updates: int = 0) -> None:
+        self.fail_updates = fail_updates
+        self.updates = 0
+        self.bodies: list[str] = []
+        self.comments: list[tuple[int, str]] = []
+        self.issues: list[dict] = []
+
+    def ensure_label(self, *_args, **_kwargs) -> None:
+        return None
+
+    def list_open_report_issues(self, _owner: str, _repo: str) -> list[dict]:
+        return self.issues
+
+    def create_issue(self, _owner: str, _repo: str, _title: str, _body: str) -> dict:
+        return {"number": 9, "html_url": "https://example/9"}
+
+    def update_issue(self, _owner: str, _repo: str, _number: int, body: str | None = None, state: str | None = None) -> None:
+        if self.fail_updates:
+            self.fail_updates -= 1
+            raise GitHubError(502, "temporary")
+        self.updates += 1
+        if body:
+            self.bodies.append(body)
+
+    def comment(self, _owner: str, _repo: str, number: int, body: str) -> None:
+        self.comments.append((number, body))
 
 
 def _git(root: Path, args: list[str]) -> None:
