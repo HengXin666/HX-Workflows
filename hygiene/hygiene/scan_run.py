@@ -114,12 +114,12 @@ def _fetch(reader: GitHub, config: Config, payload: dict, token: str) -> RepoSna
     protected: dict[str, bool] | None = None
     try:
         raw_branches = reader.list_branches(snapshot.owner, snapshot.repo)
+        pull_heads = reader.open_pr_heads(snapshot.owner, snapshot.repo)
         protected = {
             str(item.get("name") or ""): bool(item.get("protected"))
             for item in raw_branches
             if item.get("name")
         }
-        pull_heads = reader.open_pr_heads(snapshot.owner, snapshot.repo)
     except GitHubError as error:
         errors.append(f"无法确认分支保护或拉取请求, 这次不建议删除分支: {error}")
     work = Path(tempfile.mkdtemp(prefix="hygiene-"))
