@@ -2,13 +2,21 @@
 
 from __future__ import annotations
 
+import base64
 import json
+import subprocess
+import tempfile
 import unittest
+from unittest.mock import patch
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
 
 import hygiene.decide as decide_module
 from hygiene.config import load_config, parse_config
 from hygiene.decide import classify, skill_source_after_rescan
 from hygiene.github_api import _frontmatter, branch_ref_path
+from hygiene.apply_run import RepoCache
+from hygiene.local_git import GitCloneError, LocalRepo, clone_args, git_env
 from hygiene.models import (
     BranchInfo,
     CanonicalSkill,
@@ -31,6 +39,8 @@ report_repository: HX-Workflows
 actor: HengXin666
 include_forks: false
 include_archived: false
+include_private: false
+active_within_days: 0
 skill_roots:
   - .agents/skills
 preferred_sources:
@@ -57,6 +67,7 @@ def snapshot(
     skills: tuple[SkillInstance, ...] = (),
     errors: tuple[str, ...] = (),
     private: bool = False,
+    pushed_at: str | None = None,
 ) -> RepoSnapshot:
     return RepoSnapshot(
         owner="HengXin666",
@@ -69,6 +80,7 @@ def snapshot(
         skills=skills,
         errors=errors,
         private=private,
+        pushed_at=pushed_at,
     )
 
 
@@ -299,12 +311,11 @@ class TreeTests(unittest.TestCase):
 
 class ReviewFixTests(unittest.TestCase):
     def test_shipped_config_loads(self) -> None:
-        from pathlib import Path
-
         loaded = load_config(Path(__file__).resolve().parents[1] / "config.yml")
         self.assertEqual(loaded.ignored_repositories, ())
         self.assertIn("bilibili-token", loaded.protected_branches)
-        self.assertFalse(loaded.include_private)
+        self.assertTrue(loaded.include_private)
+        self.assertEqual(loaded.active_within_days, 365)
 
     def test_quotes_comments_duplicates_and_bool_text(self) -> None:
         loaded = parse_config(
@@ -336,6 +347,109 @@ ignored_repositories: []
         )
         self.assertEqual(report.repos_skipped_private, 1)
         self.assertEqual(report.branches_deletable, [])
+
+    def test_recent_private_repo_is_included_and_old_repo_is_not(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_private: true
+active_within_days: 365
+skill_roots:
+  - .agents/skills
+"""
+        )
+        now = datetime.now(timezone.utc)
+        recent = (now - timedelta(days=2)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        old = (now - timedelta(days=400)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        report = classify(
+            [
+                snapshot(
+                    "hidden",
+                    private=True,
+                    pushed_at=recent,
+                    branches=(BranchInfo("old", protected=False, ahead=0, behind=1),),
+                ),
+                snapshot(
+                    "ancient",
+                    pushed_at=old,
+                    branches=(BranchInfo("old", protected=False, ahead=0, behind=1),),
+                ),
+            ],
+            loaded,
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.repos_private, 1)
+        self.assertEqual(report.repos_skipped_stale, 1)
+        self.assertEqual(report.branch_total, 1)
+        report.apply_url = "https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-apply.yml"
+        body = render_issue(report)
+        self.assertIn("包含私有仓库", body)
+        self.assertIn(report.apply_url, body)
+
+    def test_private_skill_is_not_copied_out_as_canonical(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_private: true
+active_within_days: 0
+skill_roots:
+  - .agents/skills
+"""
+        )
+        report = classify(
+            [
+                snapshot("secret", private=True, skills=(skill("secret", "9.0", "private-tree"),)),
+                snapshot("HXLoLi", skills=(skill("HXLoLi", "2.3", "public-tree"),)),
+            ],
+            loaded,
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.canonical[0].repo, "HXLoLi")
+        self.assertEqual(report.skills_outdated, [])
+
+    def test_private_only_versions_are_not_called_unversioned(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_private: true
+active_within_days: 0
+skill_roots:
+  - .agents/skills
+"""
+        )
+        report = classify(
+            [
+                snapshot("secret", private=True, skills=(skill("secret", "2.0", "tree-a"),)),
+                snapshot("other", private=True, skills=(skill("other", "1.0", "tree-b"),)),
+            ],
+            loaded,
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.skills_unversioned, [])
+        self.assertEqual([item.repo for item in report.skills_reference_only], ["other"])
+        self.assertTrue(report.canonical[0].reference_only)
+        self.assertIn("不会把私有内容复制出去", render_issue(report))
+
+    def test_missing_active_window_defaults_to_one_year(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+skill_roots:
+  - .agents/skills
+"""
+        )
+        self.assertEqual(loaded.active_within_days, 365)
 
     def test_same_unversioned_tree_is_not_a_version_mismatch(self) -> None:
         report = classify(
@@ -452,6 +566,64 @@ ignored_repositories: []
         body = render_issue(report, limit=1200)
         self.assertLessEqual(len(body), 1200)
 
+
+class LocalGitTests(unittest.TestCase):
+    def test_clone_command_keeps_the_token_out_of_the_arguments(self) -> None:
+        token = "secret-token"
+        args = clone_args("HengXin666", "HX-Workflows", Path("/tmp/example"))
+        self.assertNotIn(token, " ".join(args))
+        self.assertIn("https://github.com/HengXin666/HX-Workflows.git", args)
+        self.assertIn("--filter=blob:none", args)
+        header = git_env(token)["GIT_CONFIG_VALUE_0"]
+        self.assertTrue(header.startswith("AUTHORIZATION: Basic "))
+        decoded = base64.b64decode(header.removeprefix("AUTHORIZATION: Basic ")).decode()
+        self.assertEqual(decoded, f"x-access-token:{token}")
+        self.assertNotIn(token, " ".join(args))
+
+    def test_failed_clone_is_not_retried(self) -> None:
+        cache = RepoCache("token")
+        try:
+            with patch("hygiene.apply_run.LocalRepo.clone", side_effect=GitCloneError("克隆超时")) as clone:
+                with self.assertRaises(GitCloneError):
+                    cache.get("HengXin666", "HXLoLi")
+                with self.assertRaises(GitCloneError):
+                    cache.get("HengXin666", "HXLoLi")
+                self.assertEqual(clone.call_count, 1)
+        finally:
+            cache.close()
+
+    def test_local_repo_sees_merged_branch_and_skill_version(self) -> None:
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            _git(root, ["init", "-b", "main"])
+            skill = root / ".agents" / "skills" / "hx-agent-notes" / "SKILL.md"
+            skill.parent.mkdir(parents=True)
+            skill.write_text("---\nname: hx-agent-notes\nmetadata:\n  version: 1.0\n---\n", encoding="utf-8")
+            _git(root, ["add", "."])
+            _git(root, ["-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-m", "one"])
+            _git(root, ["branch", "merged"])
+            skill.write_text("---\nname: hx-agent-notes\nmetadata:\n  version: 2.0\n---\n", encoding="utf-8")
+            _git(root, ["add", "."])
+            _git(root, ["-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-m", "two"])
+            _git(root, ["branch", "open"])
+            _git(root, ["checkout", "open"])
+            skill.write_text("---\nname: hx-agent-notes\nmetadata:\n  version: 3.0\n---\n", encoding="utf-8")
+            _git(root, ["add", "."])
+            _git(root, ["-c", "user.email=test@example.com", "-c", "user.name=test", "commit", "-m", "three"])
+            _git(root, ["checkout", "main"])
+            local = LocalRepo(root)
+            ahead, behind = local.ahead_behind("main", "merged")
+            self.assertEqual((ahead, behind), (0, 1))
+            open_ahead, _open_behind = local.ahead_behind("main", "open")
+            self.assertEqual(open_ahead, 1)
+            skills, errors = local.read_skills("HengXin666", "demo", local.tip("main"), (".agents/skills",))
+            self.assertEqual(errors, [])
+            self.assertEqual(skills[0].version, "2.0")
+            self.assertEqual(skills[0].folder, "hx-agent-notes")
+
+
+def _git(root: Path, args: list[str]) -> None:
+    subprocess.run(["git", "-C", str(root), *args], check=True, capture_output=True)
 
 
 if __name__ == "__main__":

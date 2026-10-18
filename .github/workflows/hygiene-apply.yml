@@ -16,7 +16,7 @@ permissions:
   issues: write
 
 concurrency:
-  group: hygiene-apply-${{ inputs.issue || github.event.issue.number || 'latest' }}
+  group: hygiene-apply
   cancel-in-progress: false
 
 jobs:

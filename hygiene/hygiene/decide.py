@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime, timedelta, timezone
 
 from hygiene.models import (
     BranchFinding,
@@ -43,7 +44,22 @@ def _commit_rank(committed_at: str | None) -> str:
     return committed_at or ""
 
 
-def should_skip(snapshot: RepoSnapshot, config: Config) -> str | None:
+def recently_pushed(pushed_at: str | None, days: int, now: datetime | None = None) -> bool:
+    if days <= 0:
+        return True
+    if not pushed_at:
+        return False
+    try:
+        when = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return current - when <= timedelta(days=days)
+
+
+def should_skip(snapshot: RepoSnapshot, config: Config, now: datetime | None = None) -> str | None:
     if snapshot.repo in config.ignored_repositories:
         return "ignored"
     if snapshot.private and not config.include_private:
@@ -52,11 +68,13 @@ def should_skip(snapshot: RepoSnapshot, config: Config) -> str | None:
         return "fork"
     if snapshot.archived and not config.include_archived:
         return "archived"
+    if not recently_pushed(snapshot.pushed_at, config.active_within_days, now):
+        return "stale"
     return None
 
 
 def classify(snapshots: list[RepoSnapshot], config: Config, scanned_at: str, run_url: str) -> Report:
-    report = Report(scanned_at=scanned_at, run_url=run_url)
+    report = Report(scanned_at=scanned_at, run_url=run_url, active_within_days=config.active_within_days)
     considered: list[RepoSnapshot] = []
     for snapshot in snapshots:
         reason = should_skip(snapshot, config)
@@ -72,7 +90,12 @@ def classify(snapshots: list[RepoSnapshot], config: Config, scanned_at: str, run
         if reason == "archived":
             report.repos_skipped_archived += 1
             continue
+        if reason == "stale":
+            report.repos_skipped_stale += 1
+            continue
         considered.append(snapshot)
+        if snapshot.private:
+            report.repos_private += 1
         report.errors.extend(f"{snapshot.owner}/{snapshot.repo}: {error}" for error in snapshot.errors)
     report.repos_considered = len(considered)
     _classify_branches(considered, config, report)
@@ -117,14 +140,18 @@ def _classify_branches(snapshots: list[RepoSnapshot], config: Config, report: Re
 
 
 def _classify_skills(snapshots: list[RepoSnapshot], config: Config, report: Report) -> None:
+    private_repos = {snapshot.repo for snapshot in snapshots if snapshot.private}
     grouped: dict[str, list[SkillInstance]] = {}
     for snapshot in snapshots:
         for skill in snapshot.skills:
             grouped.setdefault(_group_key(skill), []).append(skill)
     for skill_name, copies in sorted(grouped.items()):
-        canonical = _pick_canonical(skill_name, copies, config)
+        public = [copy for copy in copies if copy.repo not in private_repos]
+        canonical = _pick_canonical(skill_name, public or copies, config)
         if canonical is None:
             continue
+        if not public:
+            canonical = _canonical_from_existing(canonical, reference_only=True)
         report.canonical.append(canonical)
         for copy in copies:
             if copy.repo == canonical.repo and copy.path == canonical.path:
@@ -134,8 +161,11 @@ def _classify_skills(snapshots: list[RepoSnapshot], config: Config, report: Repo
                 if not version_equal(copy.parsed_version, canonical.parsed_version):
                     report.skills_version_only.append(finding)
                 continue
-            if canonical.reference_only or copy.parsed_version is None or canonical.parsed_version is None:
+            if copy.parsed_version is None or canonical.parsed_version is None:
                 report.skills_unversioned.append(finding)
+                continue
+            if canonical.reference_only:
+                report.skills_reference_only.append(finding)
                 continue
             if version_equal(copy.parsed_version, canonical.parsed_version):
                 report.skills_diverged.append(finding)
@@ -168,6 +198,21 @@ def _pick_canonical(
         ),
     )
     return _canonical(skill_name, chosen, reference_only=False)
+
+
+def _canonical_from_existing(canonical: CanonicalSkill, reference_only: bool) -> CanonicalSkill:
+    return CanonicalSkill(
+        skill_name=canonical.skill_name,
+        owner=canonical.owner,
+        repo=canonical.repo,
+        path=canonical.path,
+        version=canonical.version,
+        parsed_version=canonical.parsed_version,
+        tree_sha=canonical.tree_sha,
+        commit_sha=canonical.commit_sha,
+        committed_at=canonical.committed_at,
+        reference_only=reference_only,
+    )
 
 
 def _canonical(skill_name: str, copy: SkillInstance, reference_only: bool) -> CanonicalSkill:

@@ -4,7 +4,9 @@ from __future__ import annotations
 
 import json
 import os
+import shutil
 import subprocess
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import asdict
 from datetime import datetime, timedelta, timezone
@@ -13,6 +15,7 @@ from pathlib import Path
 from hygiene.config import load_config
 from hygiene.decide import classify, should_skip
 from hygiene.github_api import GitHub, GitHubError
+from hygiene.local_git import GitCloneError, LocalRepo
 from hygiene.models import BranchInfo, Config, RepoSnapshot, Report
 from hygiene.render import badge_files, pending_selection, render_issue
 
@@ -32,10 +35,13 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
     wanted = {part.strip() for part in repo_limit.split(",") if part.strip()}
     payloads = reader.list_owner_repos(config.owner)
     names = {str(item.get("name")) for item in payloads}
-    snapshots = _collect(reader, config, payloads, wanted)
+    snapshots = _collect(reader, config, payloads, wanted, hygiene_token)
     now = datetime.now(CST)
     scanned_at = now.strftime("%Y-%m-%d %H:%M +0800")
     report = classify(snapshots, config, scanned_at, _run_url())
+    report.apply_url = (
+        f"https://github.com/{config.owner}/{config.report_repository}/actions/workflows/hygiene-apply.yml"
+    )
     for name in sorted(wanted - names):
         report.errors.append(f"未找到仓库 {name}")
     if wanted:
@@ -54,7 +60,13 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
     return 1 if report.errors else 0
 
 
-def _collect(reader: GitHub, config: Config, payloads: list[dict], wanted: set[str]) -> list[RepoSnapshot]:
+def _collect(
+    reader: GitHub,
+    config: Config,
+    payloads: list[dict],
+    wanted: set[str],
+    token: str,
+) -> list[RepoSnapshot]:
     selected = []
     for payload in payloads:
         name = str(payload.get("name") or "")
@@ -70,7 +82,7 @@ def _collect(reader: GitHub, config: Config, payloads: list[dict], wanted: set[s
         else:
             to_fetch.append(payload)
     with ThreadPoolExecutor(max_workers=4) as pool:
-        fetched = list(pool.map(lambda item: _fetch(reader, config, item), to_fetch))
+        fetched = list(pool.map(lambda item: _fetch(reader, config, item, token), to_fetch))
     snapshots.extend(fetched)
     return sorted(snapshots, key=lambda item: item.repo)
 
@@ -88,49 +100,53 @@ def _bare_snapshot(payload: dict) -> RepoSnapshot:
         archived=bool(payload.get("archived")),
         fork=bool(payload.get("fork")),
         private=bool(payload.get("private")),
+        pushed_at=str(payload.get("pushed_at") or "") or None,
     )
 
 
-def _fetch(reader: GitHub, config: Config, payload: dict) -> RepoSnapshot:
+def _fetch(reader: GitHub, config: Config, payload: dict, token: str) -> RepoSnapshot:
     snapshot = _bare_snapshot(payload)
-    print(f"正在扫描 {snapshot.owner}/{snapshot.repo}")
+    label = "私有仓库" if snapshot.private else f"{snapshot.owner}/{snapshot.repo}"
+    print(f"正在克隆 {label}")
     if int(payload.get("size") or 0) == 0:
         return snapshot
     errors: list[str] = []
     branches: list[BranchInfo] = []
     pull_heads: list[str] = []
     skills = []
+    protected: dict[str, bool] | None = None
     try:
         raw_branches = reader.list_branches(snapshot.owner, snapshot.repo)
         pull_heads = reader.open_pr_heads(snapshot.owner, snapshot.repo)
-        heads = [str(item.get("name")) for item in raw_branches if item.get("name") != snapshot.default_branch]
-        compared = reader.compare_to_base(snapshot.owner, snapshot.repo, snapshot.default_branch, heads) if heads else {}
-        for raw in raw_branches:
-            name = str(raw.get("name") or "")
-            info = compared.get(name, {})
-            failed = "error" in info
-            branches.append(
-                BranchInfo(
-                    name=name,
-                    protected=bool(raw.get("protected")),
-                    ahead=None if failed else info.get("ahead"),
-                    behind=None if failed else info.get("behind"),
-                    status=None if failed else info.get("status"),
-                    compare_error=str(info.get("error")) if failed else None,
-                )
-            )
+        protected = {
+            str(item.get("name") or ""): bool(item.get("protected"))
+            for item in raw_branches
+            if item.get("name")
+        }
     except GitHubError as error:
-        errors.append(f"分支扫描失败: {error}")
+        protected = None
+        pull_heads = []
+        errors.append(f"无法确认分支保护或拉取请求, 这次不建议删除分支: {error}")
+    work = Path(tempfile.mkdtemp(prefix="hygiene-"))
     try:
-        skills, skill_errors = reader.read_skills(
-            snapshot.owner,
-            snapshot.repo,
-            snapshot.default_branch,
-            config.skill_roots,
-        )
-        errors.extend(skill_errors)
-    except GitHubError as error:
-        errors.append(f"Skill 扫描失败: {error}")
+        local = LocalRepo.clone(snapshot.owner, snapshot.repo, work / "repo", token)
+        if not local.empty():
+            branches = _branches_from_git(local, snapshot.default_branch, protected, errors)
+            try:
+                tip = local.tip(snapshot.default_branch)
+                skills, skill_errors = local.read_skills(
+                    snapshot.owner,
+                    snapshot.repo,
+                    tip,
+                    config.skill_roots,
+                )
+                errors.extend(skill_errors)
+            except GitCloneError as error:
+                errors.append(f"Skill 扫描失败: {error}")
+    except GitCloneError as error:
+        errors.append(f"克隆失败: {error}")
+    finally:
+        shutil.rmtree(work, ignore_errors=True)
     return RepoSnapshot(
         owner=snapshot.owner,
         repo=snapshot.repo,
@@ -141,7 +157,49 @@ def _fetch(reader: GitHub, config: Config, payload: dict) -> RepoSnapshot:
         open_pr_heads=tuple(pull_heads),
         skills=tuple(skills),
         errors=tuple(errors),
+        private=snapshot.private,
+        pushed_at=snapshot.pushed_at,
     )
+
+
+def _branches_from_git(
+    local: LocalRepo,
+    default_branch: str,
+    protected: dict[str, bool] | None,
+    errors: list[str],
+) -> list[BranchInfo]:
+    found: list[BranchInfo] = []
+    try:
+        names = local.branch_names()
+    except GitCloneError as error:
+        errors.append(f"分支扫描失败: {error}")
+        return found
+    for name in names:
+        is_protected = True if protected is None else protected.get(name, False)
+        if name == default_branch:
+            found.append(BranchInfo(name=name, protected=is_protected, ahead=0, behind=0, status="identical"))
+            continue
+        try:
+            ahead, behind = local.ahead_behind(default_branch, name)
+        except GitCloneError as error:
+            found.append(BranchInfo(name=name, protected=is_protected, compare_error=str(error)))
+            continue
+        if ahead == 0 and behind == 0:
+            status = "identical"
+        elif ahead == 0:
+            status = "behind"
+        else:
+            status = "diverged"
+        found.append(
+            BranchInfo(
+                name=name,
+                protected=is_protected,
+                ahead=ahead,
+                behind=behind,
+                status=status,
+            )
+        )
+    return found
 
 
 def _write_outputs(report: Report, badges_path: Path) -> None:

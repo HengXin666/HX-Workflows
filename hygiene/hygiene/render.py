@@ -18,6 +18,27 @@ CARD_WIDTH = 640
 CARD_HEIGHT = 228
 
 
+def _scope(report: Report) -> str:
+    parts = ["未归档", "非 fork"]
+    if report.repos_private:
+        parts.append("包含私有仓库, 名称会随这个公开仓库公开")
+    else:
+        parts.append("非私有")
+    if report.active_within_days > 0:
+        parts.append(f"最近 {report.active_within_days} 天有推送")
+    return "、".join(parts)
+
+
+def _apply_hint(report: Report) -> str:
+    url = one_line(report.apply_url)
+    if not url:
+        return "给这张 Issue 加上 `apply` 标签, 或到 Actions 里手动运行「仓库卫生修复」."
+    return (
+        f"打开 [执行修复]({url}) , 点 Run workflow. "
+        "审阅单编号留空会使用最新一张审阅单. 也可以给这张 Issue 加上 `apply` 标签."
+    )
+
+
 def one_line(value: object) -> str:
     text = "" if value is None else str(value)
     text = text.replace("\r", " ").replace("\n", " ").replace("-->", "")
@@ -36,6 +57,7 @@ def render_issue(report: Report, limit: int = ISSUE_LIMIT) -> str:
             (report.skills_outdated, "过期 Skill"),
             (report.skills_diverged, "同版本分叉"),
             (report.skills_unversioned, "没有版本号"),
+            (report.skills_reference_only, "仅供参考"),
             (report.skills_version_only, "仅版本号不同"),
             (report.errors, "扫描失败"),
         ):
@@ -55,9 +77,10 @@ def _render_issue(report: Report) -> str:
         "# 仓库卫生审阅",
         "",
         f"扫描时间: {report.scanned_at}",
-        f"扫描范围: 未归档、非 fork、非私有的个人仓库. 运行记录: {one_line(report.run_url) or '本地'}",
+        f"扫描范围: {_scope(report)}. 运行记录: {one_line(report.run_url) or '本地'}",
         "",
-        "勾选要处理的项, 然后给这张 Issue 加上 `apply` 标签. 只勾选不会执行.",
+        "勾选要处理的项, 然后执行修复. 只勾选不会执行.",
+        _apply_hint(report),
         "执行前会再检查一次. 分支必须仍然是完全合入默认分支, Skill 必须仍然低于权威版本.",
         "",
         "## 权威 Skill",
@@ -84,6 +107,8 @@ def _render_issue(report: Report) -> str:
     lines.extend(_plain_skills(report.skills_diverged, "同版本分叉, 不会覆盖."))
     lines.extend(["", "### 没有版本号", ""])
     lines.extend(_plain_skills(report.skills_unversioned, "缺少 metadata.version, 不会自动替换."))
+    lines.extend(["", "### 只有私有来源", ""])
+    lines.extend(_plain_skills(report.skills_reference_only, "版本号有效, 但不会把私有内容复制出去."))
     lines.extend(["", "### 内容相同, 只有版本号不同", ""])
     lines.extend(_plain_skills(report.skills_version_only, "目录内容一致."))
     lines.extend(
@@ -96,6 +121,8 @@ def _render_issue(report: Report) -> str:
             f"- 跳过归档: {report.repos_skipped_archived}",
             f"- 跳过忽略名单: {report.repos_skipped_ignored}",
             f"- 跳过私有仓库: {report.repos_skipped_private}",
+            f"- 纳入的私有仓库: {report.repos_private}",
+            f"- 跳过 {report.active_within_days} 天内没有推送的仓库: {report.repos_skipped_stale}",
             f"- 跳过受保护分支: {report.branches_skipped_protected}",
             f"- 跳过仍有拉取请求的分支: {report.branches_skipped_pr}",
             f"- 还有未合入提交的分支: {report.branches_not_merged}",

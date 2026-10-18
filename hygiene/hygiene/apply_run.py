@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -11,6 +13,7 @@ from pathlib import Path
 from hygiene.config import load_config
 from hygiene.decide import classify, is_protected_branch, should_skip, skill_source_after_rescan
 from hygiene.github_api import GitHub, GitHubError
+from hygiene.local_git import GitCloneError, LocalRepo
 from hygiene.models import CanonicalSkill, Config, RepoSnapshot, SkillInstance, parse_item_id, parse_version, version_less
 from hygiene.render import extract_payload, mark_done, selected_ids, unchecked_ids
 from hygiene.trees import GitFile, plan_skill_replacement, safe_branch_name, safe_skill_dir
@@ -28,6 +31,29 @@ class SkillJob:
     source_sha: str
     target_sha: str
     summary: str
+
+
+class RepoCache:
+    def __init__(self, token: str) -> None:
+        self.token = token
+        self.root = Path(tempfile.mkdtemp(prefix="hygiene-apply-"))
+        self._repos: dict[str, LocalRepo] = {}
+        self._errors: dict[str, GitCloneError] = {}
+
+    def get(self, owner: str, repo: str) -> LocalRepo:
+        key = f"{owner}/{repo}"
+        if key in self._errors:
+            raise self._errors[key]
+        if key not in self._repos:
+            try:
+                self._repos[key] = LocalRepo.clone(owner, repo, self.root / str(len(self._repos)), self.token)
+            except GitCloneError as error:
+                self._errors[key] = error
+                raise
+        return self._repos[key]
+
+    def close(self) -> None:
+        shutil.rmtree(self.root, ignore_errors=True)
 
 
 def apply_issue(config_path: Path, issue_number: int) -> int:
@@ -65,8 +91,8 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         nonlocal live_cache, live_blocked
         if live_cache is None:
             try:
-                live_cache, problems = _live_canonicals(worker, config)
-            except GitHubError as error:
+                live_cache, problems = _live_canonicals(worker, config, hygiene_token)
+            except (GitHubError, GitCloneError) as error:
                 live_cache = {}
                 live_blocked = True
                 notes.append(f"- 无法重新确认权威副本, 这次不更新 Skill: {error}")
@@ -76,69 +102,74 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
                     extra = f" 另有 {len(problems) - 1} 个仓库也失败." if len(problems) > 1 else ""
                     notes.append(f"- 权威副本确认不完整, 这次不更新 Skill, 请重新扫描. {problems[0]}{extra}")
         return live_cache.get(skill_name), live_blocked
-    for item_id in chosen:
-        ref = parse_item_id(item_id)
-        record = known.get(item_id) if isinstance(known, dict) else None
-        if ref is None or ref.owner != config.owner or not isinstance(record, dict):
-            notes.append(f"- 拒绝 `{item_id}`: 编号无效, 或不属于 {config.owner}.")
-            continue
-        if ref.kind == "branch":
-            note, finished = _apply_branch(worker, config, ref.repo, ref.value)
-            notes.append(f"- {note}")
-            if finished:
-                done.add(item_id)
-            continue
-        if ref.kind != "skill" or not safe_skill_dir(ref.value, config.skill_roots):
-            notes.append(f"- 拒绝 `{item_id}`: Skill 路径不在允许的根目录内.")
-            continue
-        source_repo = str(record.get("canonical_repo") or "")
-        source_path = str(record.get("canonical_path") or "")
-        skill_name = str(record.get("skill_name") or "")
-        live, blocked = canonical_for(skill_name)
-        reviewed_version = str(record.get("canonical_version") or "")
-        chosen_source = skill_source_after_rescan(
-            source_repo,
-            source_path,
-            reviewed_version,
-            live,
-            blocked,
-        )
-        if chosen_source is None:
-            reason = "权威副本确认不完整, 请重新扫描" if blocked else "当前权威副本低于审阅版本或无法确认, 请重新扫描"
-            notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: {reason}.")
-            continue
-        if chosen_source != (source_repo, source_path):
-            notes.append(f"- `{ref.repo}` 的权威副本改为 `{chosen_source[0]}` `{chosen_source[1]}`.")
-            source_repo, source_path = chosen_source
-        if not source_repo or not safe_skill_dir(source_path, config.skill_roots):
-            notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 审阅数据里没有合法的权威副本.")
-            continue
-        note, job = _recheck_skill(
-            worker,
-            config,
-            item_id,
-            ref.repo,
-            ref.value,
-            source_repo,
-            source_path,
-            record,
-        )
-        if job is None:
-            notes.append(f"- {note}")
-            if note.startswith("已经一致"):
-                done.add(item_id)
-            continue
-        jobs.append(job)
-    for repository, group in _by_repo(jobs).items():
-        group_notes, group_done = _apply_skill_group(worker, config, issue_number, repository, group)
-        notes.extend(group_notes)
-        done.update(group_done)
-    updated = mark_done(body, done, set(chosen) - done)
-    state = "closed" if not (set(chosen) - done) and not unchecked_ids(updated) else None
-    writer.update_issue(owner, repo, issue_number, body=updated, state=state)
-    writer.comment(owner, repo, issue_number, _comment(notes))
-    print("\n".join(notes))
-    return 1 if len(done) != len(chosen) else 0
+    repos = RepoCache(hygiene_token)
+    try:
+        for item_id in chosen:
+            ref = parse_item_id(item_id)
+            record = known.get(item_id) if isinstance(known, dict) else None
+            if ref is None or ref.owner != config.owner or not isinstance(record, dict):
+                notes.append(f"- 拒绝 `{item_id}`: 编号无效, 或不属于 {config.owner}.")
+                continue
+            if ref.kind == "branch":
+                note, finished = _apply_branch(worker, config, ref.repo, ref.value)
+                notes.append(f"- {note}")
+                if finished:
+                    done.add(item_id)
+                continue
+            if ref.kind != "skill" or not safe_skill_dir(ref.value, config.skill_roots):
+                notes.append(f"- 拒绝 `{item_id}`: Skill 路径不在允许的根目录内.")
+                continue
+            source_repo = str(record.get("canonical_repo") or "")
+            source_path = str(record.get("canonical_path") or "")
+            skill_name = str(record.get("skill_name") or "")
+            live, blocked = canonical_for(skill_name)
+            reviewed_version = str(record.get("canonical_version") or "")
+            chosen_source = skill_source_after_rescan(
+                source_repo,
+                source_path,
+                reviewed_version,
+                live,
+                blocked,
+            )
+            if chosen_source is None:
+                reason = "权威副本确认不完整, 请重新扫描" if blocked else "当前权威副本低于审阅版本或无法确认, 请重新扫描"
+                notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: {reason}.")
+                continue
+            if chosen_source != (source_repo, source_path):
+                notes.append(f"- `{ref.repo}` 的权威副本改为 `{chosen_source[0]}` `{chosen_source[1]}`.")
+                source_repo, source_path = chosen_source
+            if not source_repo or not safe_skill_dir(source_path, config.skill_roots):
+                notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 审阅数据里没有合法的权威副本.")
+                continue
+            note, job = _recheck_skill(
+                worker,
+                repos,
+                config,
+                item_id,
+                ref.repo,
+                ref.value,
+                source_repo,
+                source_path,
+                record,
+            )
+            if job is None:
+                notes.append(f"- {note}")
+                if note.startswith("已经一致"):
+                    done.add(item_id)
+                continue
+            jobs.append(job)
+        for repository, group in _by_repo(jobs).items():
+            group_notes, group_done = _apply_skill_group(worker, repos, config, issue_number, repository, group)
+            notes.extend(group_notes)
+            done.update(group_done)
+        updated = mark_done(body, done, set(chosen) - done)
+        state = "closed" if not (set(chosen) - done) and not unchecked_ids(updated) else None
+        writer.update_issue(owner, repo, issue_number, body=updated, state=state)
+        writer.comment(owner, repo, issue_number, _comment(notes))
+        print("\n".join(notes))
+        return 1 if len(done) != len(chosen) else 0
+    finally:
+        repos.close()
 
 
 def _apply_branch(worker: GitHub, config: Config, repo: str, branch: str) -> tuple[str, bool]:
@@ -171,6 +202,7 @@ def _apply_branch(worker: GitHub, config: Config, repo: str, branch: str) -> tup
 
 def _recheck_skill(
     worker: GitHub,
+    repos: RepoCache,
     config: Config,
     item_id: str,
     repo: str,
@@ -180,13 +212,17 @@ def _recheck_skill(
     record: dict,
 ) -> tuple[str, SkillJob | None]:
     try:
-        source_default = str(worker.get_repo(config.owner, source_repo).get("default_branch") or "")
-        target_default = str(worker.get_repo(config.owner, repo).get("default_branch") or "")
+        source_meta = worker.get_repo(config.owner, source_repo)
+        target_meta = worker.get_repo(config.owner, repo)
+        if source_meta.get("private") and not target_meta.get("private"):
+            return (f"拒绝 `{repo}` `{path}`: 不会把私有仓库的 Skill 复制到公开仓库.", None)
+        source_default = str(source_meta.get("default_branch") or "")
+        target_default = str(target_meta.get("default_branch") or "")
         source_sha = worker.branch_tip(config.owner, source_repo, source_default)
         target_sha = worker.branch_tip(config.owner, repo, target_default)
-        source = _one_skill(worker, config, source_repo, source_default, source_path, source_sha)
-        target = _one_skill(worker, config, repo, target_default, path, target_sha)
-    except GitHubError as error:
+        source = _one_skill(repos, config, source_repo, source_path, source_sha)
+        target = _one_skill(repos, config, repo, path, target_sha)
+    except (GitHubError, GitCloneError) as error:
         return (f"复查 `{repo}` `{path}` 失败: {error}", None)
     if source is None or target is None:
         return (f"拒绝 `{repo}` `{path}`: 权威副本或目标 Skill 已经不存在.", None)
@@ -219,22 +255,20 @@ def _recheck_skill(
 
 
 def _one_skill(
-    worker: GitHub,
+    repos: RepoCache,
     config: Config,
     repo: str,
-    default_branch: str,
     path: str,
     commit_sha: str,
 ) -> SkillInstance | None:
-    skills, errors = worker.read_skills(
+    skills, errors = repos.get(config.owner, repo).read_skills(
         config.owner,
         repo,
-        default_branch,
+        commit_sha,
         config.skill_roots,
-        commit_sha=commit_sha,
     )
     if errors:
-        raise GitHubError(0, "; ".join(errors))
+        raise GitCloneError("; ".join(errors))
     for skill in skills:
         if skill.path == path:
             return skill
@@ -243,6 +277,7 @@ def _one_skill(
 
 def _apply_skill_group(
     worker: GitHub,
+    repos: RepoCache,
     config: Config,
     issue_number: int,
     repo: str,
@@ -262,13 +297,8 @@ def _apply_skill_group(
         entries: list[dict] = []
         upload: dict[str, tuple[str, str]] = {}
         for job in jobs:
-            source_default = str(worker.get_repo(config.owner, job.source_repo).get("default_branch") or "")
-            source_files = worker.list_skill_files(
-                config.owner, job.source_repo, source_default, job.source_path, commit_sha=job.source_sha
-            )
-            target_files = worker.list_skill_files(
-                config.owner, repo, default, job.path, commit_sha=target_sha
-            )
+            source_files = repos.get(config.owner, job.source_repo).list_skill_files(job.source_sha, job.source_path)
+            target_files = repos.get(config.owner, repo).list_skill_files(target_sha, job.path)
             remapped = [_remap(job.source_path, job.path, item) for item in source_files]
             for change in plan_skill_replacement(job.path, target_files, remapped):
                 if change.sha is None:
@@ -279,7 +309,7 @@ def _apply_skill_group(
                 entries.append({"path": change.path, "mode": change.mode, "type": "blob", "sha": change.sha})
         if not entries:
             return ([f"- 已经一致: `{repo}` 没有文件差异."], {job.item_id for job in jobs})
-        copied = _upload(worker, config.owner, repo, upload)
+        copied = _upload(worker, repos, config.owner, repo, upload)
         for entry in entries:
             sha = entry.get("sha")
             if isinstance(sha, str) and sha in copied:
@@ -312,7 +342,7 @@ def _apply_skill_group(
                 set(),
             )
         return ([f"- 已更新并合入 `{repo}`: {url}"], {job.item_id for job in jobs})
-    except GitHubError as error:
+    except (GitHubError, GitCloneError) as error:
         return ([f"- 更新 `{repo}` 失败: {error}"], set())
 
 
@@ -321,10 +351,16 @@ def _remap(source_prefix: str, target_prefix: str, item: GitFile) -> GitFile:
     return GitFile(path=target_prefix + relative, mode=item.mode, sha=item.sha)
 
 
-def _upload(worker: GitHub, owner: str, repo: str, blobs: dict[str, tuple[str, str]]) -> dict[str, str]:
+def _upload(
+    worker: GitHub,
+    repos: RepoCache,
+    owner: str,
+    repo: str,
+    blobs: dict[str, tuple[str, str]],
+) -> dict[str, str]:
     copied: dict[str, str] = {}
     for sha, (source_repo, source_sha) in blobs.items():
-        content = worker.get_blob_bytes(owner, source_repo, source_sha)
+        content = repos.get(owner, source_repo).blob_bytes(source_sha)
         copied[sha] = worker.create_blob(owner, repo, content)
     return copied
 
@@ -336,7 +372,11 @@ def _by_repo(jobs: list[SkillJob]) -> dict[str, list[SkillJob]]:
     return grouped
 
 
-def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, CanonicalSkill], list[str]]:
+def _live_canonicals(
+    worker: GitHub,
+    config: Config,
+    token: str,
+) -> tuple[dict[str, CanonicalSkill], list[str]]:
     payloads = worker.list_owner_repos(config.owner)
 
     def one(payload: dict) -> RepoSnapshot:
@@ -347,17 +387,23 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
             archived=bool(payload.get("archived")),
             fork=bool(payload.get("fork")),
             private=bool(payload.get("private")),
+            pushed_at=str(payload.get("pushed_at") or "") or None,
         )
         if should_skip(snapshot, config) is not None or int(payload.get("size") or 0) == 0:
             return snapshot
+        work = Path(tempfile.mkdtemp(prefix="hygiene-"))
         try:
-            skills, errors = worker.read_skills(
-                config.owner,
+            local = LocalRepo.clone(snapshot.owner, snapshot.repo, work / "repo", token)
+            if local.empty():
+                return snapshot
+            tip = local.tip(snapshot.default_branch)
+            skills, errors = local.read_skills(
+                snapshot.owner,
                 snapshot.repo,
-                snapshot.default_branch,
+                tip,
                 config.skill_roots,
             )
-        except GitHubError as error:
+        except GitCloneError as error:
             return RepoSnapshot(
                 owner=snapshot.owner,
                 repo=snapshot.repo,
@@ -365,8 +411,11 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
                 archived=snapshot.archived,
                 fork=snapshot.fork,
                 private=snapshot.private,
+                pushed_at=snapshot.pushed_at,
                 errors=(str(error),),
             )
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         return RepoSnapshot(
             owner=snapshot.owner,
             repo=snapshot.repo,
@@ -374,6 +423,7 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
             archived=snapshot.archived,
             fork=snapshot.fork,
             private=snapshot.private,
+            pushed_at=snapshot.pushed_at,
             skills=tuple(skills),
             errors=tuple(errors),
         )
