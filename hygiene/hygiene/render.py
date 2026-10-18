@@ -134,14 +134,22 @@ def unchecked_ids(body: str) -> list[str]:
     return found
 
 
-def mark_done(body: str, done_ids: set[str]) -> str:
+def mark_done(body: str, done_ids: set[str], chosen: set[str] | None = None) -> str:
+    chosen = done_ids if chosen is None else chosen
+
     def replace(match: re.Match[str]) -> str:
         text = match.group("text")
         item = ITEM_ID.search(text)
-        if item is None or item.group("id") not in done_ids:
+        if item is None:
             return match.group(0)
-        suffix = "" if "已处理" in text else " （已处理）"
-        return f"- [x] {text}{suffix}"
+        item_id = item.group("id")
+        if item_id in done_ids:
+            suffix = "" if "已处理" in text else " （已处理）"
+            return f"- [x] {text}{suffix}"
+        if item_id in chosen:
+            suffix = " （上次失败, 请重试）" if "上次失败" not in text else ""
+            return f"- [ ] {text}{suffix}"
+        return match.group(0)
 
     return CHECK_LINE.sub(replace, body)
 

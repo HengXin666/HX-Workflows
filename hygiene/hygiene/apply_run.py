@@ -24,6 +24,8 @@ class SkillJob:
     path: str
     source_repo: str
     source_path: str
+    source_commit_sha: str
+    target_commit_sha: str
     summary: str
 
 
@@ -95,8 +97,8 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         group_notes, group_done = _apply_skill_group(worker, config, issue_number, repository, group)
         notes.extend(group_notes)
         done.update(group_done)
-    updated = mark_done(body, done)
-    state = "closed" if not unchecked_ids(updated) else None
+    updated = mark_done(body, done, set(chosen))
+    state = "closed" if done == set(chosen) and not unchecked_ids(updated) else None
     writer.update_issue(owner, repo, issue_number, body=updated, state=state)
     writer.comment(owner, repo, issue_number, _comment(notes))
     print("\n".join(notes))
@@ -171,6 +173,8 @@ def _recheck_skill(
             path=path,
             source_repo=source_repo,
             source_path=source_path,
+            source_commit_sha=source.commit_sha or "",
+            target_commit_sha=target.commit_sha or "",
             summary=summary,
         ),
     )
@@ -206,8 +210,12 @@ def _apply_skill_group(
         upload: dict[str, tuple[str, str]] = {}
         for job in jobs:
             source_default = str(worker.get_repo(config.owner, job.source_repo).get("default_branch") or "")
-            source_files = worker.list_skill_files(config.owner, job.source_repo, source_default, job.source_path)
-            target_files = worker.list_skill_files(config.owner, repo, default, job.path)
+            source_files = worker.list_skill_files(
+                config.owner, job.source_repo, job.source_commit_sha or source_default, job.source_path
+            )
+            target_files = worker.list_skill_files(
+                config.owner, repo, job.target_commit_sha or default, job.path
+            )
             remapped = [_remap(job.source_path, job.path, item) for item in source_files]
             for change in plan_skill_replacement(job.path, target_files, remapped):
                 if change.sha is None:
@@ -224,9 +232,15 @@ def _apply_skill_group(
             if isinstance(sha, str) and sha in copied:
                 entry["sha"] = copied[sha]
         parent, base_tree = worker.default_commit_tree(config.owner, repo, default)
+        if any(job.target_commit_sha and job.target_commit_sha != parent for job in jobs):
+            return ([f"- `{repo}` 在复查后发生变化, 已停止更新, 请重新扫描."], set())
         tree_sha = worker.create_tree(config.owner, repo, base_tree, entries)
         stamp = datetime.now(CST).strftime("%Y%m%d%H%M%S")
-        branch = f"hygiene/skills-{issue_number}-{stamp}"
+        branch_prefix = f"hygiene/skills-{issue_number}-"
+        existing = [head for head in worker.open_pr_heads(config.owner, repo) if head.startswith(branch_prefix)]
+        if existing:
+            return ([f"- `{repo}` 已有打开的 Skill 更新拉取请求 `{existing[0]}`, 跳过重复创建."], set())
+        branch = f"{branch_prefix}{stamp}"
         message = "更新过期 Skill"
         commit = worker.create_commit(config.owner, repo, message, tree_sha, parent)
         worker.create_branch(config.owner, repo, branch, commit)
@@ -241,6 +255,11 @@ def _apply_skill_group(
                 [f"- `{repo}` 已打开拉取请求 {url}, 但未能自动合入: {error}"],
                 set(),
             )
+        try:
+            worker.delete_branch(config.owner, repo, branch)
+        except GitHubError as error:
+            if error.status != 404:
+                return ([f"- `{repo}` 已合入, 但删除临时分支失败: {error}"], {job.item_id for job in jobs})
         return ([f"- 已更新并合入 `{repo}`: {url}"], {job.item_id for job in jobs})
     except GitHubError as error:
         return ([f"- 更新 `{repo}` 失败: {error}"], set())

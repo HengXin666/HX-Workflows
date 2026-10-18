@@ -177,10 +177,14 @@ class GitHub:
         found = _skill_paths(entries, roots)
         if not found:
             return [], []
-        texts = self._blob_texts(owner, repo, commit_sha, [item[2] for item in found])
+        texts, text_errors = self._blob_texts(owner, repo, commit_sha, [item[2] for item in found])
         dates = self._path_commits(commit_sha, owner, repo, [item[0] for item in found])
         skills: list[SkillInstance] = []
+        errors = [f"{owner}/{repo}: {path} 的 Skill.md 读取失败: {message}" for path, message in text_errors]
+        failed_paths = {path for path, _message in text_errors}
         for path, folder, skill_file, tree_sha in found:
+            if skill_file in failed_paths:
+                continue
             name, version = _frontmatter(texts.get(skill_file, ""))
             commit = dates.get(path) or {}
             skills.append(
@@ -197,10 +201,13 @@ class GitHub:
                     committed_at=commit.get("at"),
                 )
             )
-        return skills, []
+        return skills, errors
 
-    def _blob_texts(self, owner: str, repo: str, commit_sha: str, paths: list[str]) -> dict[str, str]:
+    def _blob_texts(
+        self, owner: str, repo: str, commit_sha: str, paths: list[str]
+    ) -> tuple[dict[str, str], list[tuple[str, str]]]:
         texts: dict[str, str] = {}
+        failures: list[tuple[str, str]] = []
         for offset in range(0, len(paths), 15):
             chunk = paths[offset : offset + 15]
             fields = []
@@ -218,13 +225,19 @@ class GitHub:
                 + " ".join(fields)
                 + " } }"
             )
-            data, _errors = self.graphql(query)
+            data, errors = self.graphql(query)
             repository = data.get("repository") or {}
+            failed = _blob_alias_errors(errors)
             for index, path in enumerate(chunk):
                 node = repository.get(f"b{index}") or {}
-                text = node.get("text")
-                texts[path] = text if isinstance(text, str) else ""
-        return texts
+                text = node.get("text") if isinstance(node, dict) else None
+                if index in failed:
+                    failures.append((path, failed[index]))
+                elif not isinstance(text, str):
+                    failures.append((path, "GraphQL 未返回 blob 文本"))
+                else:
+                    texts[path] = text
+        return texts, failures
 
     def _path_commits(
         self,
@@ -265,8 +278,11 @@ class GitHub:
         return found
 
     def list_skill_files(self, owner: str, repo: str, ref: str, skill_path: str) -> list[GitFile]:
-        ref_payload = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(ref)}")
-        commit_sha = str((ref_payload.get("object") or {}).get("sha") or "")
+        if len(ref) == 40 and all(char in "0123456789abcdefABCDEF" for char in ref):
+            commit_sha = ref
+        else:
+            ref_payload = self.request("GET", f"/repos/{owner}/{repo}/git/ref/{branch_ref_path(ref)}")
+            commit_sha = str((ref_payload.get("object") or {}).get("sha") or "")
         tree = self.request("GET", f"/repos/{owner}/{repo}/git/trees/{commit_sha}?recursive=1")
         if tree.get("truncated"):
             raise GitHubError(0, f"{owner}/{repo} 的目录树被截断")
@@ -401,6 +417,16 @@ class GitHub:
         return self.request("GET", f"/repos/{owner}/{repo}/issues/{number}")
 
 
+def _blob_alias_errors(errors: list[dict[str, Any]]) -> dict[int, str]:
+    failed: dict[int, str] = {}
+    for error in errors:
+        path = error.get("path") or []
+        for part in path:
+            if isinstance(part, str) and part.startswith("b") and part[1:].isdigit():
+                failed[int(part[1:])] = str(error.get("message") or "读取失败")
+    return failed
+
+
 def _alias_errors(errors: list[dict[str, Any]]) -> dict[int, str]:
     failed: dict[int, str] = {}
     for error in errors:
@@ -448,6 +474,10 @@ def _frontmatter(text: str) -> tuple[str | None, str | None]:
 
 
 def _unquote(value: str) -> str:
-    if len(value) >= 2 and value[0] == value[-1] and value[0] in {'"', "'"}:
-        return value[1:-1]
+    value = value.strip()
+    if len(value) >= 2 and value[0] in {'"', "'"}:
+        quote = value[0]
+        end = value.find(quote, 1)
+        if end > 0:
+            return value[1:end]
     return value.split("#", 1)[0].strip()
