@@ -21,7 +21,7 @@
 抽取器测试不打开网站，CI 跑的是这一条：
 
 ```bash
-node --test services/hx-browser/gate/engine.test.ts
+node --experimental-strip-types --test services/hx-browser/gate/engine.test.ts
 ```
 
 实测要接到已经启动的 hx-browser 环境。不要把本机无头 Chromium 的结果当成产品分。
@@ -29,7 +29,7 @@ node --test services/hx-browser/gate/engine.test.ts
 ```bash
 uv run python services/hx-browser/gate/probe.py \
     --cdp http://127.0.0.1:43000 --out /tmp/sites.json
-node services/hx-browser/gate/score.ts /tmp/sites.json /tmp/scorecard.svg
+node --experimental-strip-types services/hx-browser/gate/score.ts /tmp/sites.json /tmp/scorecard.svg
 ```
 
 ## 对照

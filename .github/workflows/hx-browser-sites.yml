@@ -77,6 +77,9 @@ jobs:
           sudo apt-get install -y firefox
       - name: Python 依赖
         run: pip install playwright
+      - name: Playwright 的 Firefox
+        if: matrix.cell.browser == 'firefox'
+        run: python -m playwright install firefox
       - name: hx-browser 依赖
         if: matrix.cell.group == 'hx'
         run: pip install fastapi 'uvicorn[standard]' websockets pydantic httpx markdown
