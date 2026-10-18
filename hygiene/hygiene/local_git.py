@@ -7,6 +7,7 @@ canonical skill.
 
 from __future__ import annotations
 
+import base64
 import os
 import shutil
 import subprocess
@@ -47,9 +48,10 @@ def git_env(token: str) -> dict[str, str]:
     for name in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
         env.pop(name, None)
     if token:
+        basic = base64.b64encode(f"x-access-token:{token}".encode()).decode()
         env["GIT_CONFIG_COUNT"] = "1"
         env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-        env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: bearer {token}"
+        env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: Basic {basic}"
     return env
 
 

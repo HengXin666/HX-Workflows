@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import base64
 import json
 import subprocess
 import tempfile
@@ -544,7 +545,11 @@ class LocalGitTests(unittest.TestCase):
         args = clone_args("HengXin666", "HX-Workflows", Path("/tmp/example"))
         self.assertNotIn(token, " ".join(args))
         self.assertIn("https://github.com/HengXin666/HX-Workflows.git", args)
-        self.assertEqual(git_env(token)["GIT_CONFIG_VALUE_0"], f"AUTHORIZATION: bearer {token}")
+        header = git_env(token)["GIT_CONFIG_VALUE_0"]
+        self.assertTrue(header.startswith("AUTHORIZATION: Basic "))
+        decoded = base64.b64decode(header.removeprefix("AUTHORIZATION: Basic ")).decode()
+        self.assertEqual(decoded, f"x-access-token:{token}")
+        self.assertNotIn(token, " ".join(args))
 
     def test_local_repo_sees_merged_branch_and_skill_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:
