@@ -239,7 +239,19 @@ def is_protected_branch(branch: str, config: Config) -> bool:
     return _protected(branch, config)
 
 
-def canonical_changed(recorded_repo: str, recorded_path: str, live: CanonicalSkill | None) -> bool:
-    if live is None or live.reference_only:
-        return True
-    return live.repo != recorded_repo or live.path != recorded_path
+def skill_source_after_rescan(
+    recorded_repo: str,
+    recorded_path: str,
+    live: CanonicalSkill | None,
+    incomplete: bool,
+) -> tuple[str, str] | None:
+    """Return the source to copy, or None when the update must be refused.
+
+    An incomplete rescan must not promote a successfully read lower copy.
+    """
+
+    if incomplete or live is None or live.reference_only:
+        return None
+    if live.repo != recorded_repo or live.path != recorded_path:
+        return live.repo, live.path
+    return recorded_repo, recorded_path

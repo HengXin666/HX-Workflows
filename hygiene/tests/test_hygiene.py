@@ -7,7 +7,7 @@ import unittest
 
 import hygiene.decide as decide_module
 from hygiene.config import load_config, parse_config
-from hygiene.decide import canonical_changed, classify
+from hygiene.decide import classify, skill_source_after_rescan
 from hygiene.github_api import _frontmatter, branch_ref_path
 from hygiene.models import (
     BranchInfo,
@@ -394,22 +394,30 @@ ignored_repositories: []
         report.errors.append("比较失败")
         self.assertIn("#d29922", badge_files(report)["branches.svg"])
 
-    def test_canonical_change_requires_rescan(self) -> None:
-        live = CanonicalSkill(
+    def test_incomplete_rescan_does_not_promote_a_lower_copy(self) -> None:
+        lower = CanonicalSkill(
             "hx-agent-notes",
             "HengXin666",
             "other",
             ".agents/skills/hx-agent-notes",
-            "3.0",
-            (3, 0),
+            "2.5",
+            (2, 5),
             "tree",
             "abc",
             "2026-10-18T00:00:00Z",
             False,
         )
-        self.assertTrue(canonical_changed("HXLoLi", ".agents/skills/hx-agent-notes", live))
-        self.assertFalse(canonical_changed("other", ".agents/skills/hx-agent-notes", live))
-        self.assertTrue(canonical_changed("other", ".agents/skills/hx-agent-notes", None))
+        self.assertIsNone(
+            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", lower, True)
+        )
+        self.assertEqual(
+            skill_source_after_rescan("HXLoLi", ".agents/skills/hx-agent-notes", lower, False),
+            ("other", ".agents/skills/hx-agent-notes"),
+        )
+        self.assertEqual(
+            skill_source_after_rescan("other", ".agents/skills/hx-agent-notes", lower, False),
+            ("other", ".agents/skills/hx-agent-notes"),
+        )
 
     def test_issue_shrinks_to_the_limit(self) -> None:
         report = classify(

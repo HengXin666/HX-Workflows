@@ -9,7 +9,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from hygiene.config import load_config
-from hygiene.decide import canonical_changed, classify, is_protected_branch, should_skip
+from hygiene.decide import classify, is_protected_branch, should_skip, skill_source_after_rescan
 from hygiene.github_api import GitHub, GitHubError
 from hygiene.models import CanonicalSkill, Config, RepoSnapshot, SkillInstance, parse_item_id, parse_version, version_less
 from hygiene.render import extract_payload, mark_done, selected_ids, unchecked_ids
@@ -59,16 +59,23 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
     done: set[str] = set()
     jobs: list[SkillJob] = []
     live_cache: dict[str, CanonicalSkill] | None = None
+    live_blocked = False
 
-    def canonical_for(skill_name: str) -> CanonicalSkill | None:
-        nonlocal live_cache
+    def canonical_for(skill_name: str) -> tuple[CanonicalSkill | None, bool]:
+        nonlocal live_cache, live_blocked
         if live_cache is None:
             try:
-                live_cache = _live_canonicals(worker, config)
+                live_cache, problems = _live_canonicals(worker, config)
             except GitHubError as error:
                 live_cache = {}
+                live_blocked = True
                 notes.append(f"- 无法重新确认权威副本, 这次不更新 Skill: {error}")
-        return live_cache.get(skill_name)
+            else:
+                if problems:
+                    live_blocked = True
+                    extra = f" 另有 {len(problems) - 1} 个仓库也失败." if len(problems) > 1 else ""
+                    notes.append(f"- 权威副本确认不完整, 这次不更新 Skill, 请重新扫描. {problems[0]}{extra}")
+        return live_cache.get(skill_name), live_blocked
     for item_id in chosen:
         ref = parse_item_id(item_id)
         record = known.get(item_id) if isinstance(known, dict) else None
@@ -87,15 +94,16 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         source_repo = str(record.get("canonical_repo") or "")
         source_path = str(record.get("canonical_path") or "")
         skill_name = str(record.get("skill_name") or "")
-        live = canonical_for(skill_name)
-        if canonical_changed(source_repo, source_path, live):
-            if live is None or live.reference_only:
-                notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 当前权威副本已变化或无法确认, 请重新扫描.")
-                continue
-            notes.append(f"- `{ref.repo}` 的权威副本改为 `{live.repo}` `{live.path}`.")
-            source_repo = live.repo
-            source_path = live.path
-            record = {**record, "canonical_version": live.version or ""}
+        live, blocked = canonical_for(skill_name)
+        chosen_source = skill_source_after_rescan(source_repo, source_path, live, blocked)
+        if chosen_source is None:
+            reason = "权威副本确认不完整, 请重新扫描" if blocked else "当前权威副本已变化或无法确认, 请重新扫描"
+            notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: {reason}.")
+            continue
+        if chosen_source != (source_repo, source_path):
+            notes.append(f"- `{ref.repo}` 的权威副本改为 `{chosen_source[0]}` `{chosen_source[1]}`.")
+            source_repo, source_path = chosen_source
+            record = {**record, "canonical_version": (live.version if live is not None else "") or ""}
         if not source_repo or not safe_skill_dir(source_path, config.skill_roots):
             notes.append(f"- 拒绝 `{ref.repo}` `{ref.value}`: 审阅数据里没有合法的权威副本.")
             continue
@@ -322,7 +330,7 @@ def _by_repo(jobs: list[SkillJob]) -> dict[str, list[SkillJob]]:
     return grouped
 
 
-def _live_canonicals(worker: GitHub, config: Config) -> dict[str, CanonicalSkill]:
+def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, CanonicalSkill], list[str]]:
     payloads = worker.list_owner_repos(config.owner)
 
     def one(payload: dict) -> RepoSnapshot:
@@ -366,8 +374,16 @@ def _live_canonicals(worker: GitHub, config: Config) -> dict[str, CanonicalSkill
 
     with ThreadPoolExecutor(max_workers=4) as pool:
         snapshots = list(pool.map(one, payloads))
+    problems = [
+        f"{snapshot.repo}: {error}"
+        for snapshot in snapshots
+        if should_skip(snapshot, config) is None
+        for error in snapshot.errors
+    ]
+    if problems:
+        return {}, problems
     report = classify(snapshots, config, "", "")
-    return {item.skill_name: item for item in report.canonical}
+    return {item.skill_name: item for item in report.canonical}, []
 
 
 def _comment(notes: list[str]) -> str:
