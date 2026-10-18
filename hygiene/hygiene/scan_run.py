@@ -38,8 +38,9 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
     report = classify(snapshots, config, scanned_at, _run_url())
     for name in sorted(wanted - names):
         report.errors.append(f"未找到仓库 {name}")
-    _write_outputs(report, badges_path)
-    _publish_issue(writer, config, report, force_new, now)
+    if not wanted:
+        _write_outputs(report, badges_path)
+    _publish_issue(writer, config, report, force_new, now, scoped=bool(wanted))
     print(
         f"扫描完成: 可删分支 {len(report.branches_deletable)}, "
         f"过期 Skill {len(report.skills_outdated)}, 失败 {len(report.errors)}"
@@ -94,6 +95,9 @@ def _fetch(reader: GitHub, config: Config, payload: dict) -> RepoSnapshot:
     print(f"正在扫描 {snapshot.owner}/{snapshot.repo}")
     errors: list[str] = []
     branches: list[BranchInfo] = []
+    if payload.get("size") == 0:
+        return snapshot
+
     pull_heads: list[str] = []
     skills = []
     try:
@@ -164,13 +168,19 @@ def _export_png(svg_path: Path, png_path: Path) -> None:
         raise RuntimeError(f"PNG 卡片渲染失败: {detail}") from error
 
 
-def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bool, now: datetime) -> None:
+def _publish_issue(
+    writer: GitHub, config: Config, report: Report, force_new: bool, now: datetime, scoped: bool = False
+) -> None:
     owner = config.owner
     repo = config.report_repository
     writer.ensure_label(owner, repo, "hygiene-report", "1f6feb", "仓库卫生审阅单")
     writer.ensure_label(owner, repo, "apply", "d29922", "执行已勾选的仓库卫生修复")
     body = render_issue(report)
-    title = f"仓库卫生审阅 {now.strftime('%Y-%m-%d %H:%M')}"
+    title = f"{'局部' if scoped else ''}仓库卫生审阅 {now.strftime('%Y-%m-%d %H:%M')}"
+    if scoped:
+        created = writer.create_issue(owner, repo, title, body)
+        print(f"已新建局部审阅单: {created.get('html_url')}")
+        return
     existing = writer.list_open_report_issues(owner, repo)
     if force_new:
         for issue in existing:
