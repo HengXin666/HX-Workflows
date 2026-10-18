@@ -18,6 +18,17 @@ CARD_WIDTH = 640
 CARD_HEIGHT = 228
 
 
+def _scope(report: Report) -> str:
+    parts = ["未归档", "非 fork"]
+    if report.repos_private:
+        parts.append("包含私有仓库, 名称会随这个公开仓库公开")
+    else:
+        parts.append("非私有")
+    if report.active_within_days > 0:
+        parts.append(f"最近 {report.active_within_days} 天有推送")
+    return "、".join(parts)
+
+
 def one_line(value: object) -> str:
     text = "" if value is None else str(value)
     text = text.replace("\r", " ").replace("\n", " ").replace("-->", "")
@@ -55,7 +66,7 @@ def _render_issue(report: Report) -> str:
         "# 仓库卫生审阅",
         "",
         f"扫描时间: {report.scanned_at}",
-        f"扫描范围: 未归档、非 fork、非私有的个人仓库. 运行记录: {one_line(report.run_url) or '本地'}",
+        f"扫描范围: {_scope(report)}. 运行记录: {one_line(report.run_url) or '本地'}",
         "",
         "勾选要处理的项, 然后给这张 Issue 加上 `apply` 标签. 只勾选不会执行.",
         "执行前会再检查一次. 分支必须仍然是完全合入默认分支, Skill 必须仍然低于权威版本.",
@@ -96,6 +107,8 @@ def _render_issue(report: Report) -> str:
             f"- 跳过归档: {report.repos_skipped_archived}",
             f"- 跳过忽略名单: {report.repos_skipped_ignored}",
             f"- 跳过私有仓库: {report.repos_skipped_private}",
+            f"- 纳入的私有仓库: {report.repos_private}",
+            f"- 跳过一年内没有推送的仓库: {report.repos_skipped_stale}",
             f"- 跳过受保护分支: {report.branches_skipped_protected}",
             f"- 跳过仍有拉取请求的分支: {report.branches_skipped_pr}",
             f"- 还有未合入提交的分支: {report.branches_not_merged}",

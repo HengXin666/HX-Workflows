@@ -3,7 +3,8 @@ report_repository: HX-Workflows
 actor: HengXin666
 include_forks: false
 include_archived: false
-include_private: false
+include_private: true
+active_within_days: 365
 skill_roots:
   - .agents/skills
   - .dsh/skills

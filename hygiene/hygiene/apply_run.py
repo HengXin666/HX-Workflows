@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import os
+import shutil
+import tempfile
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
@@ -11,6 +13,7 @@ from pathlib import Path
 from hygiene.config import load_config
 from hygiene.decide import classify, is_protected_branch, should_skip, skill_source_after_rescan
 from hygiene.github_api import GitHub, GitHubError
+from hygiene.local_git import GitCloneError, LocalRepo
 from hygiene.models import CanonicalSkill, Config, RepoSnapshot, SkillInstance, parse_item_id, parse_version, version_less
 from hygiene.render import extract_payload, mark_done, selected_ids, unchecked_ids
 from hygiene.trees import GitFile, plan_skill_replacement, safe_branch_name, safe_skill_dir
@@ -65,7 +68,7 @@ def apply_issue(config_path: Path, issue_number: int) -> int:
         nonlocal live_cache, live_blocked
         if live_cache is None:
             try:
-                live_cache, problems = _live_canonicals(worker, config)
+                live_cache, problems = _live_canonicals(worker, config, hygiene_token)
             except GitHubError as error:
                 live_cache = {}
                 live_blocked = True
@@ -336,7 +339,11 @@ def _by_repo(jobs: list[SkillJob]) -> dict[str, list[SkillJob]]:
     return grouped
 
 
-def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, CanonicalSkill], list[str]]:
+def _live_canonicals(
+    worker: GitHub,
+    config: Config,
+    token: str,
+) -> tuple[dict[str, CanonicalSkill], list[str]]:
     payloads = worker.list_owner_repos(config.owner)
 
     def one(payload: dict) -> RepoSnapshot:
@@ -347,17 +354,23 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
             archived=bool(payload.get("archived")),
             fork=bool(payload.get("fork")),
             private=bool(payload.get("private")),
+            pushed_at=str(payload.get("pushed_at") or "") or None,
         )
         if should_skip(snapshot, config) is not None or int(payload.get("size") or 0) == 0:
             return snapshot
+        work = Path(tempfile.mkdtemp(prefix="hygiene-"))
         try:
-            skills, errors = worker.read_skills(
-                config.owner,
+            local = LocalRepo.clone(snapshot.owner, snapshot.repo, work / "repo", token)
+            if local.empty():
+                return snapshot
+            tip = local.tip(snapshot.default_branch)
+            skills, errors = local.read_skills(
+                snapshot.owner,
                 snapshot.repo,
-                snapshot.default_branch,
+                tip,
                 config.skill_roots,
             )
-        except GitHubError as error:
+        except GitCloneError as error:
             return RepoSnapshot(
                 owner=snapshot.owner,
                 repo=snapshot.repo,
@@ -365,8 +378,11 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
                 archived=snapshot.archived,
                 fork=snapshot.fork,
                 private=snapshot.private,
+                pushed_at=snapshot.pushed_at,
                 errors=(str(error),),
             )
+        finally:
+            shutil.rmtree(work, ignore_errors=True)
         return RepoSnapshot(
             owner=snapshot.owner,
             repo=snapshot.repo,
@@ -374,6 +390,7 @@ def _live_canonicals(worker: GitHub, config: Config) -> tuple[dict[str, Canonica
             archived=snapshot.archived,
             fork=snapshot.fork,
             private=snapshot.private,
+            pushed_at=snapshot.pushed_at,
             skills=tuple(skills),
             errors=tuple(errors),
         )

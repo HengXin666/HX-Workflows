@@ -39,6 +39,12 @@ def _scalar(value: str) -> str | bool:
     return _unquote(value)
 
 
+def _days(value: object) -> int:
+    if isinstance(value, str) and value.isdecimal():
+        return int(value)
+    raise ValueError("配置 active_within_days 必须是非负整数")
+
+
 def parse_config(text: str) -> Config:
     data: dict[str, object] = {}
     current: str | None = None
@@ -95,6 +101,7 @@ def parse_config(text: str) -> Config:
         include_forks=flag("include_forks", False),
         include_archived=flag("include_archived", False),
         include_private=flag("include_private", False),
+        active_within_days=_days(data.get("active_within_days", "0")),
         skill_roots=roots,
         preferred_sources=words("preferred_sources"),
         protected_branches=words("protected_branches"),
