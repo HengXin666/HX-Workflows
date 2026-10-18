@@ -68,7 +68,7 @@ def main() -> None:
 
 
 def _visit(context, site: dict, browser_label: str) -> dict:
-    page = context.new_page()
+    page = None
     visit = {
         "siteId": site["id"],
         "name": site["name"],
@@ -87,21 +87,22 @@ def _visit(context, site: dict, browser_label: str) -> dict:
         "href": "",
     }
     try:
+        page = context.new_page()
         response = page.goto(site["url"], wait_until="domcontentloaded", timeout=25000)
         visit["status"] = response.status if response else 0
         page.wait_for_timeout(site["wait_ms"])
         if site.get("click") == "audit":
             button = page.get_by_role("button", name="Run the audit")
-            if button.count():
-                button.first.click(timeout=8000)
-                page.wait_for_timeout(22000)
+            button.first.wait_for(state="visible", timeout=15000)
+            button.first.click(timeout=8000)
+            page.wait_for_timeout(22000)
         extracted = page.evaluate(
             """() => {
                 const text = (document.body?.innerText || "").replace(/\\s+\\n/g, "\\n").trim();
                 const count = (sel) => document.querySelectorAll(sel).length;
                 return {
                     title: document.title,
-                    excerpt: text.slice(0, 12000),
+                    excerpt: text.slice(0, 50000),
                     passed: count(".passed, .pass, td.ok, .success"),
                     failed: count(".failed, td.failed, .fail"),
                     ua: navigator.userAgent,
@@ -115,7 +116,11 @@ def _visit(context, site: dict, browser_label: str) -> dict:
     except Exception as exc:  # noqa: BLE001 — one dead site must not drop the rest
         visit["error"] = str(exc)
     finally:
-        page.close()
+        if page is not None:
+            try:
+                page.close()
+            except Exception:
+                pass
     print(f"{site['id']} {'ok' if visit['ok'] else 'ERR'}")
     return visit
 
