@@ -29,6 +29,16 @@ def _scope(report: Report) -> str:
     return "、".join(parts)
 
 
+def _apply_hint(report: Report) -> str:
+    url = one_line(report.apply_url)
+    if not url:
+        return "给这张 Issue 加上 `apply` 标签, 或到 Actions 里手动运行「仓库卫生修复」."
+    return (
+        f"打开 [执行修复]({url}) , 点 Run workflow. "
+        "审阅单编号留空会使用最新一张审阅单. 也可以给这张 Issue 加上 `apply` 标签."
+    )
+
+
 def one_line(value: object) -> str:
     text = "" if value is None else str(value)
     text = text.replace("\r", " ").replace("\n", " ").replace("-->", "")
@@ -68,7 +78,8 @@ def _render_issue(report: Report) -> str:
         f"扫描时间: {report.scanned_at}",
         f"扫描范围: {_scope(report)}. 运行记录: {one_line(report.run_url) or '本地'}",
         "",
-        "勾选要处理的项, 然后给这张 Issue 加上 `apply` 标签. 只勾选不会执行.",
+        "勾选要处理的项, 然后执行修复. 只勾选不会执行.",
+        _apply_hint(report),
         "执行前会再检查一次. 分支必须仍然是完全合入默认分支, Skill 必须仍然低于权威版本.",
         "",
         "## 权威 Skill",

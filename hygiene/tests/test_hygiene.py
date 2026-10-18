@@ -379,7 +379,10 @@ skill_roots:
         self.assertEqual(report.repos_private, 1)
         self.assertEqual(report.repos_skipped_stale, 1)
         self.assertEqual(report.branch_total, 1)
-        self.assertIn("包含私有仓库", render_issue(report))
+        report.apply_url = "https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-apply.yml"
+        body = render_issue(report)
+        self.assertIn("包含私有仓库", body)
+        self.assertIn(report.apply_url, body)
 
     def test_same_unversioned_tree_is_not_a_version_mismatch(self) -> None:
         report = classify(

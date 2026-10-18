@@ -202,3 +202,4 @@ class Report:
     canonical: list[CanonicalSkill] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
     truncated: list[str] = field(default_factory=list)
+    apply_url: str = ""

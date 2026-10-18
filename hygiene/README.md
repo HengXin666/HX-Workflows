@@ -22,7 +22,9 @@ GitHub README 不渲染仓库内的 SVG, 所以上面的徽标由 shields.io 读
 2. 在本仓库 Settings -> Secrets and variables -> Actions 添加 `HYGIENE_TOKEN`.
 3. 打开 Actions 里的「仓库卫生扫描」, 手动运行. `repo_limit` 只在日志里看结果, 不会改正式审阅单和状态卡片.
 4. 在新的审阅单里勾选要处理的项.
-5. 给这张 Issue 加上 `apply` 标签. 只勾选不会执行.
+5. 打开 [执行修复](https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-apply.yml), 点 Run workflow. 审阅单编号留空会使用最新一张审阅单. 也可以给 Issue 加上 `apply` 标签. 只勾选不会执行.
+
+扫描入口: [仓库卫生扫描](https://github.com/HengXin666/HX-Workflows/actions/workflows/hygiene-scan.yml)
 
 分支会直接删除. Skill 会按仓库打开一个拉取请求, 能通过保护规则就 squash 合入. 合不进去会把拉取请求留在原仓库, 并写回审阅单.
 

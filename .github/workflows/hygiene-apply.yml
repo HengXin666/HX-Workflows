@@ -3,22 +3,34 @@ name: 仓库卫生修复
 on:
   issues:
     types: [labeled]
+  workflow_dispatch:
+    inputs:
+      issue:
+        description: "审阅单编号. 留空则使用最新一张打开的仓库卫生审阅单"
+        required: false
+        type: string
+        default: ""
 
 permissions:
   contents: read
   issues: write
 
 concurrency:
-  group: hygiene-apply-${{ github.event.issue.number }}
+  group: hygiene-apply-${{ inputs.issue || github.event.issue.number || 'latest' }}
   cancel-in-progress: false
 
 jobs:
   apply:
     if: >-
-      github.event.label.name == 'apply' &&
-      contains(github.event.issue.labels.*.name, 'hygiene-report') &&
-      github.event.sender.login == 'HengXin666' &&
-      github.event.issue.pull_request == null
+      github.actor == 'HengXin666' &&
+      (
+        github.event_name == 'workflow_dispatch' ||
+        (
+          github.event.label.name == 'apply' &&
+          contains(github.event.issue.labels.*.name, 'hygiene-report') &&
+          github.event.issue.pull_request == null
+        )
+      )
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -38,11 +50,22 @@ jobs:
           HYGIENE_TOKEN: ${{ secrets.HYGIENE_TOKEN }}
           GITHUB_TOKEN: ${{ github.token }}
           GITHUB_ACTOR: ${{ github.actor }}
+          ISSUE_INPUT: ${{ github.event_name == 'workflow_dispatch' && inputs.issue || github.event.issue.number }}
         run: |
           if [ -z "$HYGIENE_TOKEN" ]; then
             echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可写入目标仓库的 classic PAT, 权限勾选 repo."
             exit 1
           fi
+          ISSUE="$ISSUE_INPUT"
+          if [ -z "$ISSUE" ]; then
+            ISSUE="$(gh issue list --repo "$GITHUB_REPOSITORY" --label hygiene-report --state open --limit 1 --json number --jq '.[0].number')"
+          fi
+          case "$ISSUE" in
+            ''|*[!0-9]*)
+              echo "审阅单编号无效: ${ISSUE:-空}"
+              exit 1
+              ;;
+          esac
           PYTHONPATH=hygiene uv run --project hygiene python -m hygiene apply \
             --config hygiene/config.yml \
-            --issue "${{ github.event.issue.number }}"
+            --issue "$ISSUE"

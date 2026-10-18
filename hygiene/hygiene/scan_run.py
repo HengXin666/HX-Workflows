@@ -39,6 +39,9 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
     now = datetime.now(CST)
     scanned_at = now.strftime("%Y-%m-%d %H:%M +0800")
     report = classify(snapshots, config, scanned_at, _run_url())
+    report.apply_url = (
+        f"https://github.com/{config.owner}/{config.report_repository}/actions/workflows/hygiene-apply.yml"
+    )
     for name in sorted(wanted - names):
         report.errors.append(f"未找到仓库 {name}")
     if wanted:
