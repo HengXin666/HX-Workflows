@@ -84,6 +84,7 @@ class Config:
     include_forks: bool
     include_archived: bool
     include_private: bool
+    active_within_days: int
     skill_roots: tuple[str, ...]
     preferred_sources: tuple[str, ...]
     protected_branches: tuple[str, ...]
@@ -127,6 +128,7 @@ class RepoSnapshot:
     skills: tuple[SkillInstance, ...] = ()
     errors: tuple[str, ...] = ()
     private: bool = False
+    pushed_at: str | None = None
 
 
 @dataclass(frozen=True)
@@ -182,6 +184,9 @@ class Report:
     repos_skipped_archived: int = 0
     repos_skipped_ignored: int = 0
     repos_skipped_private: int = 0
+    repos_skipped_stale: int = 0
+    repos_private: int = 0
+    active_within_days: int = 0
     branch_total: int = 0
     skill_total: int = 0
     diverged_total: int = 0

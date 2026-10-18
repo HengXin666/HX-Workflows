@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import fnmatch
+from datetime import datetime, timedelta, timezone
 
 from hygiene.models import (
     BranchFinding,
@@ -43,7 +44,22 @@ def _commit_rank(committed_at: str | None) -> str:
     return committed_at or ""
 
 
-def should_skip(snapshot: RepoSnapshot, config: Config) -> str | None:
+def recently_pushed(pushed_at: str | None, days: int, now: datetime | None = None) -> bool:
+    if days <= 0:
+        return True
+    if not pushed_at:
+        return False
+    try:
+        when = datetime.fromisoformat(pushed_at.replace("Z", "+00:00"))
+    except ValueError:
+        return False
+    if when.tzinfo is None:
+        when = when.replace(tzinfo=timezone.utc)
+    current = now or datetime.now(timezone.utc)
+    return current - when <= timedelta(days=days)
+
+
+def should_skip(snapshot: RepoSnapshot, config: Config, now: datetime | None = None) -> str | None:
     if snapshot.repo in config.ignored_repositories:
         return "ignored"
     if snapshot.private and not config.include_private:
@@ -52,11 +68,13 @@ def should_skip(snapshot: RepoSnapshot, config: Config) -> str | None:
         return "fork"
     if snapshot.archived and not config.include_archived:
         return "archived"
+    if not recently_pushed(snapshot.pushed_at, config.active_within_days, now):
+        return "stale"
     return None
 
 
 def classify(snapshots: list[RepoSnapshot], config: Config, scanned_at: str, run_url: str) -> Report:
-    report = Report(scanned_at=scanned_at, run_url=run_url)
+    report = Report(scanned_at=scanned_at, run_url=run_url, active_within_days=config.active_within_days)
     considered: list[RepoSnapshot] = []
     for snapshot in snapshots:
         reason = should_skip(snapshot, config)
@@ -72,7 +90,12 @@ def classify(snapshots: list[RepoSnapshot], config: Config, scanned_at: str, run
         if reason == "archived":
             report.repos_skipped_archived += 1
             continue
+        if reason == "stale":
+            report.repos_skipped_stale += 1
+            continue
         considered.append(snapshot)
+        if snapshot.private:
+            report.repos_private += 1
         report.errors.extend(f"{snapshot.owner}/{snapshot.repo}: {error}" for error in snapshot.errors)
     report.repos_considered = len(considered)
     _classify_branches(considered, config, report)
