@@ -1,6 +1,7 @@
 # Project architecture
 
 - Keep the three product boundaries independent: `bilibili-api`, `emall`, and `tg`.
+- Keep `hygiene` separate from those products. It only scans personal repositories and mutates them after the `apply` label.
 - Put Telegram scheduling and dependency ordering in `tg/runner.py`; keep provider actions in `tg/scripts/`.
 - Keep `tg/web` local-only. Browser code must call the local adapter and must never contain Telegram or SMTP credentials.
 - External Bilibili, Telegram, SMTP, and GitHub calls need adapters that deterministic tests can replace.

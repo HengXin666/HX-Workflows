@@ -1,0 +1,22 @@
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_forks: false
+include_archived: false
+skill_roots:
+  - .agents/skills
+  - .dsh/skills
+  - .codex/skills
+preferred_sources:
+  - HXLoLi
+protected_branches:
+  - main
+  - master
+  - develop
+  - dev
+  - gh-pages
+protected_branch_globs:
+  - release/*
+  - dependabot/*
+  - renovate/*
+ignored_repositories: []

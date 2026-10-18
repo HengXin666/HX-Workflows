@@ -1,0 +1,47 @@
+name: 仓库卫生修复
+
+on:
+  issues:
+    types: [labeled]
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: hygiene-apply-${{ github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  apply:
+    if: >-
+      github.event.label.name == 'apply' &&
+      github.event.sender.login == 'HengXin666' &&
+      github.event.issue.pull_request == null
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 执行已勾选的修复
+        env:
+          HYGIENE_TOKEN: ${{ secrets.HYGIENE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_ACTOR: ${{ github.actor }}
+        run: |
+          if [ -z "$HYGIENE_TOKEN" ]; then
+            echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可写入目标仓库的 classic PAT, 权限勾选 repo."
+            exit 1
+          fi
+          PYTHONPATH=hygiene uv run --project hygiene python -m hygiene apply \
+            --config hygiene/config.yml \
+            --issue "${{ github.event.issue.number }}"

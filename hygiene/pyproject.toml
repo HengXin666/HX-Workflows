@@ -1,0 +1,9 @@
+[project]
+name = "hx-hygiene"
+version = "0.1.0"
+description = "Scan merged branches and drifted skills across personal repositories."
+requires-python = ">=3.12"
+dependencies = []
+
+[tool.uv]
+package = false

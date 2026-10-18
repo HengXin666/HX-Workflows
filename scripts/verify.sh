@@ -5,10 +5,10 @@ ROOT="$(git rev-parse --show-toplevel)"
 cd "$ROOT"
 
 echo "==> static: Python syntax"
-python3 -m compileall -q bilibili-api/bilibili_api emall tg/runner.py tg/scripts
+python3 -m compileall -q bilibili-api/bilibili_api emall tg/runner.py tg/scripts hygiene/hygiene
 
 echo "==> static: repository architecture (advisory baseline)"
-python3 scripts/check_arch.py --max-output 20 bilibili-api/bilibili_api emall tg
+python3 scripts/check_arch.py --max-output 20 bilibili-api/bilibili_api emall tg hygiene/hygiene
 
 echo "==> static: changed TG Python lint"
 uv run --project tg ruff check tg/runner.py tg/scripts tg/tests
@@ -21,6 +21,9 @@ uv run --project emall python -m unittest discover -s emall/tests -v
 
 echo "==> S1: Bilibili signing and filename safety"
 uv run --project bilibili-api python -m unittest discover -s bilibili-api/tests -v
+
+echo "==> S1: hygiene decisions, review text, and status cards"
+PYTHONPATH=hygiene uv run --project hygiene python -m unittest discover -s hygiene/tests -v
 
 echo "==> S1: robot blueprint node contracts and templates"
 npm --prefix tg/web run test
