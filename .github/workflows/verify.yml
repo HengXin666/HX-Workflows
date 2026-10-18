@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - hygiene/badges/**
   workflow_dispatch:
 
 permissions:
@@ -42,6 +44,7 @@ jobs:
           uv sync --project bilibili-api
           uv sync --project emall
           uv sync --project tg
+          uv sync --project hygiene
 
       - name: Install web project
         run: npm ci --prefix tg/web
