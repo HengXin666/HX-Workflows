@@ -79,6 +79,10 @@ def _classify_branches(snapshots: list[RepoSnapshot], config: Config, report: Re
                 continue
             if branch.compare_error or branch.ahead is None:
                 report.branches_compare_failed += 1
+                report.errors.append(
+                    f"{snapshot.owner}/{snapshot.repo}: 分支 `{branch.name}` 比较失败: "
+                    f"{branch.compare_error or '没有 ahead 数据'}"
+                )
                 continue
             if branch.ahead != 0:
                 report.branches_not_merged += 1
