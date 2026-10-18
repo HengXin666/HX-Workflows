@@ -33,9 +33,22 @@ def _apply_hint(report: Report) -> str:
     url = one_line(report.apply_url)
     if not url:
         return "给这张 Issue 加上 `apply` 标签, 或到 Actions 里手动运行「仓库卫生修复」."
-    return (
-        f"打开 [执行修复]({url}) , 点 Run workflow. "
-        "审阅单编号留空会使用最新一张审阅单. 也可以给这张 Issue 加上 `apply` 标签."
+    if report.issue_number:
+        number = (
+            f"审阅单编号留空, 会使用最新一张打开的审阅单, 也就是这张 #{report.issue_number}. "
+            f"也可以把编号填成 `{report.issue_number}`."
+        )
+    else:
+        number = "审阅单编号留空, 会使用最新一张打开的审阅单."
+    return "\n".join(
+        [
+            "勾选之后可以从这里直接跑修复:",
+            "",
+            url,
+            "",
+            f"打开后点 Run workflow. {number}",
+            "仍然可以给这张 Issue 加上 `apply` 标签来触发.",
+        ]
     )
 
 
