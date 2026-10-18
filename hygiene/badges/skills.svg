@@ -2,5 +2,5 @@
   <rect width="280" height="28" rx="6" fill="#f6f8fa"/>
   <rect x="0.5" y="0.5" width="279" height="27" rx="5.5" fill="none" stroke="#d0d7de"/>
   <text x="12" y="19" fill="#656d76" font-size="13" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">过期 Skill</text>
-  <text x="168" y="19" fill="#6e7781" font-size="13" font-weight="700" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">尚未扫描</text>
+  <text x="168" y="19" fill="#d29922" font-size="13" font-weight="700" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">5</text>
 </svg>
