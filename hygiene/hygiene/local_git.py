@@ -88,13 +88,17 @@ class LocalRepo:
             env["GIT_CONFIG_COUNT"] = "1"
             env["GIT_CONFIG_KEY_0"] = "http.extraheader"
             env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: bearer {token}"
-        result = subprocess.run(
-            ["git", *clone_args(owner, repo, dest)],
-            capture_output=True,
-            timeout=300,
-            check=False,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *clone_args(owner, repo, dest)],
+                capture_output=True,
+                timeout=300,
+                check=False,
+                env=env,
+            )
+        except subprocess.TimeoutExpired as error:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise GitCloneError("克隆超时") from error
         if result.returncode != 0:
             detail = result.stderr.decode("utf-8", errors="replace")[:300]
             if token:
