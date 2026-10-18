@@ -15,6 +15,7 @@ protected_branches:
   - develop
   - dev
   - gh-pages
+  - bilibili-token
 protected_branch_globs:
   - release/*
   - dependabot/*

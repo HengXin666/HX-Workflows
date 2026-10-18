@@ -38,6 +38,8 @@ def parse_config(text: str) -> Config:
         if raw_value == "":
             data[key] = []
             current = key
+        elif raw_value == "[]":
+            data[key] = []
         else:
             data[key] = _scalar(raw_value)
 
