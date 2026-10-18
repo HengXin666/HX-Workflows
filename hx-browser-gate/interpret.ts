@@ -56,8 +56,8 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
     const unreliable = /unreliable/i.test(text);
     const trustworthy = /trustworthy/i.test(text) && !unreliable;
     const mx = text.match(/(\d+)\s*MX SCORE/i);
-    if (!unreliable && !trustworthy && !mx) return missed(base, "没有看到 MX 或结论");
-    const score = mx ? Number(mx[1]) : unreliable ? 0 : 100;
+    if (!mx || (!unreliable && !trustworthy)) return missed(base, "没有同时看到 MX 和结论");
+    const score = Number(mx[1]);
     return scored(base, score, unreliable ? "fail" : "pass", unreliable ? "Unreliable" : "Trustworthy", [
       mx ? `MX ${mx[1]}` : "",
     ]);
@@ -86,7 +86,10 @@ const readers: Record<string, (base: Base, text: string, visit: RawVisit) => Sit
   },
   deviceinfo: (base, text) => {
     if (/you are a bot/i.test(text) || /"isBot":\s*true/i.test(text)) {
-      return scored(base, 0, "fail", "You are a bot", ["webdriver", /CDP/i.test(text) ? "CDP" : ""].filter(Boolean));
+      return scored(base, 0, "fail", "You are a bot", [
+        /webdriver/i.test(text) ? "webdriver" : "",
+        /CDP/i.test(text) ? "CDP" : "",
+      ].filter(Boolean));
     }
     if (/you are not a bot|you are human/i.test(text)) return scored(base, 100, "pass", "不是机器人", []);
     return missed(base, "没有看到是不是机器人");
