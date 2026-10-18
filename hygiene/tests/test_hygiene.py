@@ -7,6 +7,7 @@ import json
 import subprocess
 import tempfile
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -14,7 +15,8 @@ import hygiene.decide as decide_module
 from hygiene.config import load_config, parse_config
 from hygiene.decide import classify, skill_source_after_rescan
 from hygiene.github_api import _frontmatter, branch_ref_path
-from hygiene.local_git import LocalRepo, clone_args, git_env
+from hygiene.apply_run import RepoCache
+from hygiene.local_git import GitCloneError, LocalRepo, clone_args, git_env
 from hygiene.models import (
     BranchInfo,
     CanonicalSkill,
@@ -411,6 +413,32 @@ skill_roots:
         self.assertEqual(report.canonical[0].repo, "HXLoLi")
         self.assertEqual(report.skills_outdated, [])
 
+    def test_private_only_versions_are_not_called_unversioned(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_private: true
+active_within_days: 0
+skill_roots:
+  - .agents/skills
+"""
+        )
+        report = classify(
+            [
+                snapshot("secret", private=True, skills=(skill("secret", "2.0", "tree-a"),)),
+                snapshot("other", private=True, skills=(skill("other", "1.0", "tree-b"),)),
+            ],
+            loaded,
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.skills_unversioned, [])
+        self.assertEqual([item.repo for item in report.skills_reference_only], ["other"])
+        self.assertTrue(report.canonical[0].reference_only)
+        self.assertIn("不会把私有内容复制出去", render_issue(report))
+
     def test_missing_active_window_defaults_to_one_year(self) -> None:
         loaded = parse_config(
             """
@@ -545,11 +573,24 @@ class LocalGitTests(unittest.TestCase):
         args = clone_args("HengXin666", "HX-Workflows", Path("/tmp/example"))
         self.assertNotIn(token, " ".join(args))
         self.assertIn("https://github.com/HengXin666/HX-Workflows.git", args)
+        self.assertIn("--filter=blob:none", args)
         header = git_env(token)["GIT_CONFIG_VALUE_0"]
         self.assertTrue(header.startswith("AUTHORIZATION: Basic "))
         decoded = base64.b64decode(header.removeprefix("AUTHORIZATION: Basic ")).decode()
         self.assertEqual(decoded, f"x-access-token:{token}")
         self.assertNotIn(token, " ".join(args))
+
+    def test_failed_clone_is_not_retried(self) -> None:
+        cache = RepoCache("token")
+        try:
+            with patch("hygiene.apply_run.LocalRepo.clone", side_effect=GitCloneError("克隆超时")) as clone:
+                with self.assertRaises(GitCloneError):
+                    cache.get("HengXin666", "HXLoLi")
+                with self.assertRaises(GitCloneError):
+                    cache.get("HengXin666", "HXLoLi")
+                self.assertEqual(clone.call_count, 1)
+        finally:
+            cache.close()
 
     def test_local_repo_sees_merged_branch_and_skill_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

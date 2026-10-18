@@ -161,8 +161,11 @@ def _classify_skills(snapshots: list[RepoSnapshot], config: Config, report: Repo
                 if not version_equal(copy.parsed_version, canonical.parsed_version):
                     report.skills_version_only.append(finding)
                 continue
-            if canonical.reference_only or copy.parsed_version is None or canonical.parsed_version is None:
+            if copy.parsed_version is None or canonical.parsed_version is None:
                 report.skills_unversioned.append(finding)
+                continue
+            if canonical.reference_only:
+                report.skills_reference_only.append(finding)
                 continue
             if version_equal(copy.parsed_version, canonical.parsed_version):
                 report.skills_diverged.append(finding)

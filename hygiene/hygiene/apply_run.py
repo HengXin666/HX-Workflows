@@ -38,11 +38,18 @@ class RepoCache:
         self.token = token
         self.root = Path(tempfile.mkdtemp(prefix="hygiene-apply-"))
         self._repos: dict[str, LocalRepo] = {}
+        self._errors: dict[str, GitCloneError] = {}
 
     def get(self, owner: str, repo: str) -> LocalRepo:
         key = f"{owner}/{repo}"
+        if key in self._errors:
+            raise self._errors[key]
         if key not in self._repos:
-            self._repos[key] = LocalRepo.clone(owner, repo, self.root / str(len(self._repos)), self.token)
+            try:
+                self._repos[key] = LocalRepo.clone(owner, repo, self.root / str(len(self._repos)), self.token)
+            except GitCloneError as error:
+                self._errors[key] = error
+                raise
         return self._repos[key]
 
     def close(self) -> None:

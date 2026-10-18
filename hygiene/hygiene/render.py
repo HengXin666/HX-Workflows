@@ -57,6 +57,7 @@ def render_issue(report: Report, limit: int = ISSUE_LIMIT) -> str:
             (report.skills_outdated, "过期 Skill"),
             (report.skills_diverged, "同版本分叉"),
             (report.skills_unversioned, "没有版本号"),
+            (report.skills_reference_only, "仅供参考"),
             (report.skills_version_only, "仅版本号不同"),
             (report.errors, "扫描失败"),
         ):
@@ -106,6 +107,8 @@ def _render_issue(report: Report) -> str:
     lines.extend(_plain_skills(report.skills_diverged, "同版本分叉, 不会覆盖."))
     lines.extend(["", "### 没有版本号", ""])
     lines.extend(_plain_skills(report.skills_unversioned, "缺少 metadata.version, 不会自动替换."))
+    lines.extend(["", "### 只有私有来源", ""])
+    lines.extend(_plain_skills(report.skills_reference_only, "版本号有效, 但不会把私有内容复制出去."))
     lines.extend(["", "### 内容相同, 只有版本号不同", ""])
     lines.extend(_plain_skills(report.skills_version_only, "目录内容一致."))
     lines.extend(

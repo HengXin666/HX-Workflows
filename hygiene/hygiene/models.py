@@ -198,6 +198,7 @@ class Report:
     skills_outdated: list[SkillFinding] = field(default_factory=list)
     skills_diverged: list[SkillFinding] = field(default_factory=list)
     skills_unversioned: list[SkillFinding] = field(default_factory=list)
+    skills_reference_only: list[SkillFinding] = field(default_factory=list)
     skills_version_only: list[SkillFinding] = field(default_factory=list)
     canonical: list[CanonicalSkill] = field(default_factory=list)
     errors: list[str] = field(default_factory=list)
