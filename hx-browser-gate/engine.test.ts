@@ -59,7 +59,7 @@ test("canvas signature is recorded and kept out of the average", () => {
   ]);
   assert.equal(report.results[0].kind, "record");
   assert.equal(report.score, 100);
-  assert.equal(report.verdict, "pass");
+  assert.equal(report.verdict, "incomplete");
 });
 
 test("any failed site blocks even if another site is clean", () => {
@@ -81,6 +81,17 @@ test("a round with no concluded site is not scored zero", () => {
   const report = scoreVisits([visit("pixelscan", "still loading")]);
   assert.equal(report.score, null);
   assert.equal(report.verdict, "incomplete");
+});
+
+test("Trustworthy without an MX score is not a pass", () => {
+  const result = interpret(visit("iphey", "Trustworthy"));
+  assert.equal(result.kind, "miss");
+});
+
+test("a bot verdict does not invent a webdriver reason", () => {
+  const result = interpret(visit("deviceinfo", "You are a bot"));
+  assert.equal(result.verdict, "fail");
+  assert.equal(result.detail, "");
 });
 
 test("Clearcote coherence score is the site's number", () => {

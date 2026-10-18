@@ -19,7 +19,7 @@ export type RawVisit = {
   passed: number | null;
   failed: number | null;
   ua?: string;
-  webdriver?: boolean;
+  webdriver?: boolean | null;
   error?: string;
   href?: string;
 };
