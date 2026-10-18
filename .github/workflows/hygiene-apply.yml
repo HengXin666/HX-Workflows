@@ -20,7 +20,7 @@ jobs:
       github.event.sender.login == 'HengXin666' &&
       github.event.issue.pull_request == null
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 45
     steps:
       - name: 拉取仓库
         uses: actions/checkout@v4
