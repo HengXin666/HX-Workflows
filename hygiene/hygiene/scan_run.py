@@ -265,7 +265,22 @@ def _create_report(writer: GitHub, owner: str, repo: str, title: str, report: Re
     number = int(created.get("number") or 0)
     if number:
         report.issue_number = number
-        writer.update_issue(owner, repo, number, body=render_issue(report))
+        try:
+            writer.update_issue(owner, repo, number, body=render_issue(report))
+        except GitHubError as error:
+            # The issue already contains the complete report.  Preserve a
+            # usable recovery path if the follow-up request is unavailable.
+            print(f"审阅单编号写入失败: {error}")
+            try:
+                writer.comment(
+                    owner,
+                    repo,
+                    number,
+                    f"审阅单编号是 `#{number}`. 请在修复 workflow 中填入此编号; "
+                    "正文编号写入失败, 可稍后重试扫描.",
+                )
+            except GitHubError as comment_error:
+                print(f"审阅单恢复提示写入失败: {comment_error}")
     print(f"已新建审阅单: {created.get('html_url')}")
 
 
