@@ -51,8 +51,9 @@ def scan(config_path: Path, badges_path: Path, repo_limit: str, force_new: bool)
             f"过期 Skill {report.skill_total}, 失败 {len(report.errors)}"
         )
         return 1 if report.errors else 0
-    _write_outputs(report, badges_path)
+    _write_badges(report, badges_path)
     _publish_issue(writer, config, report, force_new, now)
+    _write_report_json(report, badges_path)
     print(
         f"扫描完成: 可删分支 {report.branch_total}, "
         f"过期 Skill {report.skill_total}, 失败 {len(report.errors)}"
@@ -202,11 +203,14 @@ def _branches_from_git(
     return found
 
 
-def _write_outputs(report: Report, badges_path: Path) -> None:
+def _write_badges(report: Report, badges_path: Path) -> None:
     badges_path.mkdir(parents=True, exist_ok=True)
     for name, content in badge_files(report).items():
         (badges_path / name).write_text(content, encoding="utf-8")
     _export_png(badges_path / "summary.svg", badges_path / "summary.png")
+
+
+def _write_report_json(report: Report, badges_path: Path) -> None:
     output = badges_path.parent / "output" / "report.json"
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text(json.dumps(asdict(report), ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
@@ -254,6 +258,7 @@ def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bo
             "如果要丢弃勾选并重开, 重新运行扫描并打开 force_new.",
         )
         print(f"保留现有审阅单: {current.get('html_url')}")
+        report.issue_number = number
         return
     report.issue_number = number
     writer.update_issue(owner, repo, number, body=render_issue(report))
@@ -263,10 +268,32 @@ def _publish_issue(writer: GitHub, config: Config, report: Report, force_new: bo
 def _create_report(writer: GitHub, owner: str, repo: str, title: str, report: Report) -> None:
     created = writer.create_issue(owner, repo, title, render_issue(report))
     number = int(created.get("number") or 0)
-    if number:
-        report.issue_number = number
-        writer.update_issue(owner, repo, number, body=render_issue(report))
-    print(f"已新建审阅单: {created.get('html_url')}")
+    url = str(created.get("html_url") or "")
+    if not number:
+        print(f"已新建审阅单但没有编号: {url}")
+        return
+    report.issue_number = number
+    body = render_issue(report)
+    last: GitHubError | None = None
+    for _ in range(3):
+        try:
+            writer.update_issue(owner, repo, number, body=body)
+            print(f"已新建审阅单: {url}")
+            return
+        except GitHubError as error:
+            last = error
+    note = (
+        f"正文没能写入编号. 这张审阅单是 #{number}. "
+        f"修复入口: {report.apply_url} . 也可以把编号填成 {number}."
+    )
+    try:
+        writer.comment(owner, repo, number, note)
+    except GitHubError as error:
+        report.errors.append(f"审阅单 #{number} 已创建, 但编号没有写上: {error}")
+        print(f"审阅单 #{number} 已创建, 编号写入失败: {error}")
+        return
+    report.errors.append(f"审阅单 #{number} 正文更新失败, 编号已写在评论里: {last}")
+    print(f"已新建审阅单: {url}, 编号写在评论里")
 
 
 def _print_quota(reader: GitHub) -> None:

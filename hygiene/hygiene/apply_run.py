@@ -347,12 +347,14 @@ def _apply_skill_group(
 
 
 def _skill_commit_message(jobs: list[SkillJob]) -> str:
-    names: list[str] = []
+    paths: list[str] = []
     for job in jobs:
-        name = job.path.strip("/").rsplit("/", 1)[-1]
-        if name and name not in names:
-            names.append(name)
-    listed = ", ".join(names) or "Skill"
+        path = job.path.strip("/")
+        if path and path not in paths:
+            paths.append(path)
+    leaves = [path.rsplit("/", 1)[-1] for path in paths]
+    shown = [path if leaves.count(leaf) > 1 else leaf for path, leaf in zip(paths, leaves)]
+    listed = ", ".join(shown) or "Skill"
     if len(listed) > 72:
         listed = listed[:69] + "..."
     return f"fix(skills): 更新 {listed}"
