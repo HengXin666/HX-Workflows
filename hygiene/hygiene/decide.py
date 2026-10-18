@@ -140,14 +140,18 @@ def _classify_branches(snapshots: list[RepoSnapshot], config: Config, report: Re
 
 
 def _classify_skills(snapshots: list[RepoSnapshot], config: Config, report: Report) -> None:
+    private_repos = {snapshot.repo for snapshot in snapshots if snapshot.private}
     grouped: dict[str, list[SkillInstance]] = {}
     for snapshot in snapshots:
         for skill in snapshot.skills:
             grouped.setdefault(_group_key(skill), []).append(skill)
     for skill_name, copies in sorted(grouped.items()):
-        canonical = _pick_canonical(skill_name, copies, config)
+        public = [copy for copy in copies if copy.repo not in private_repos]
+        canonical = _pick_canonical(skill_name, public or copies, config)
         if canonical is None:
             continue
+        if not public:
+            canonical = _canonical_from_existing(canonical, reference_only=True)
         report.canonical.append(canonical)
         for copy in copies:
             if copy.repo == canonical.repo and copy.path == canonical.path:
@@ -191,6 +195,21 @@ def _pick_canonical(
         ),
     )
     return _canonical(skill_name, chosen, reference_only=False)
+
+
+def _canonical_from_existing(canonical: CanonicalSkill, reference_only: bool) -> CanonicalSkill:
+    return CanonicalSkill(
+        skill_name=canonical.skill_name,
+        owner=canonical.owner,
+        repo=canonical.repo,
+        path=canonical.path,
+        version=canonical.version,
+        parsed_version=canonical.parsed_version,
+        tree_sha=canonical.tree_sha,
+        commit_sha=canonical.commit_sha,
+        committed_at=canonical.committed_at,
+        reference_only=reference_only,
+    )
 
 
 def _canonical(skill_name: str, copy: SkillInstance, reference_only: bool) -> CanonicalSkill:

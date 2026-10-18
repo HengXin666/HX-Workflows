@@ -101,7 +101,7 @@ def parse_config(text: str) -> Config:
         include_forks=flag("include_forks", False),
         include_archived=flag("include_archived", False),
         include_private=flag("include_private", False),
-        active_within_days=_days(data.get("active_within_days", "0")),
+        active_within_days=_days(data.get("active_within_days", "365")),
         skill_roots=roots,
         preferred_sources=words("preferred_sources"),
         protected_branches=words("protected_branches"),

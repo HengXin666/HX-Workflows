@@ -42,25 +42,30 @@ def clone_args(owner: str, repo: str, dest: Path) -> list[str]:
     ]
 
 
-def _git(repo: Path, args: list[str], token: str = "", timeout: int = 180) -> subprocess.CompletedProcess[bytes]:
+def git_env(token: str) -> dict[str, str]:
     env = os.environ.copy()
-    env.pop("GIT_CONFIG_COUNT", None)
-    env.pop("GIT_CONFIG_KEY_0", None)
-    env.pop("GIT_CONFIG_VALUE_0", None)
+    for name in ("GIT_CONFIG_COUNT", "GIT_CONFIG_KEY_0", "GIT_CONFIG_VALUE_0"):
+        env.pop(name, None)
     if token:
         env["GIT_CONFIG_COUNT"] = "1"
         env["GIT_CONFIG_KEY_0"] = "http.extraheader"
         env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: bearer {token}"
+    return env
+
+
+def _git(repo: Path, args: list[str], token: str = "", timeout: int = 180) -> subprocess.CompletedProcess[bytes]:
     try:
         return subprocess.run(
             ["git", "-C", str(repo), *args],
             capture_output=True,
             timeout=timeout,
             check=False,
-            env=env,
+            env=git_env(token),
         )
     except subprocess.TimeoutExpired as error:
         raise GitCloneError("git 超时") from error
+    except OSError as error:
+        raise GitCloneError("git 失败") from error
 
 
 def _check(repo: Path, args: list[str], token: str = "") -> str:
@@ -83,19 +88,22 @@ class LocalRepo:
         dest.parent.mkdir(parents=True, exist_ok=True)
         if dest.exists():
             shutil.rmtree(dest)
-        env = os.environ.copy()
-        if token:
-            env["GIT_CONFIG_COUNT"] = "1"
-            env["GIT_CONFIG_KEY_0"] = "http.extraheader"
-            env["GIT_CONFIG_VALUE_0"] = f"AUTHORIZATION: bearer {token}"
-        result = subprocess.run(
-            ["git", *clone_args(owner, repo, dest)],
-            capture_output=True,
-            timeout=300,
-            check=False,
-            env=env,
-        )
+        try:
+            result = subprocess.run(
+                ["git", *clone_args(owner, repo, dest)],
+                capture_output=True,
+                timeout=300,
+                check=False,
+                env=git_env(token),
+            )
+        except subprocess.TimeoutExpired as error:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise GitCloneError("克隆超时") from error
+        except OSError as error:
+            shutil.rmtree(dest, ignore_errors=True)
+            raise GitCloneError("克隆失败") from error
         if result.returncode != 0:
+            shutil.rmtree(dest, ignore_errors=True)
             detail = result.stderr.decode("utf-8", errors="replace")[:300]
             if token:
                 detail = detail.replace(token, "***")
@@ -107,7 +115,10 @@ class LocalRepo:
 
     def empty(self) -> bool:
         result = _git(self.path, ["for-each-ref", "--format=%(refname)", "refs/heads"])
-        return result.returncode != 0 or not result.stdout.strip()
+        if result.returncode != 0:
+            detail = result.stderr.decode("utf-8", errors="replace")[:300]
+            raise GitCloneError(detail.strip() or "无法读取分支")
+        return not result.stdout.strip()
 
     def branch_names(self) -> list[str]:
         text = _check(self.path, ["for-each-ref", "--format=%(refname:short)", "refs/heads"], self.token)

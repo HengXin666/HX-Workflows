@@ -47,9 +47,9 @@ Skill 按目录名和 frontmatter 的 `name` 归组, 读 `metadata.version`. 最
 
 合入判断在本地 git 完成, 不靠 GitHub 的比较接口. 扫描会做不含文件内容的克隆 (`--filter=blob:none`), 只有读到 `SKILL.md` 时才下载那一个文件. 不整仓下载, 因为全部仓库大约 5.5GB, 其中 `HXLoLi` 一个就有 3.5GB.
 
-只克隆最近 365 天有推送的仓库, 包含私有仓库. fork 和归档仍然跳过. 审阅单在这个公开仓库里, 私有仓库的名字和分支名会出现在审阅单上. `bilibili-token` 是令牌分支, 永远不删.
+只克隆最近 365 天有推送的仓库, 包含私有仓库. fork、归档、私有仓库和天数都可以在 [config.yml](./config.yml) 里改. 审阅单在这个公开仓库里, 私有仓库的名字和分支名会出现在审阅单上. 私有仓库里的 Skill 不会被复制到公开仓库. `bilibili-token` 是令牌分支, 永远不删.
 
 ## 工作流
 
 - [仓库卫生扫描](../.github/workflows/hygiene-scan.yml): 只读扫描, 更新审阅单和状态卡片
-- [仓库卫生修复](../.github/workflows/hygiene-apply.yml): 只在 `apply` 标签出现时执行, 并且操作者必须是 `HengXin666`
+- [仓库卫生修复](../.github/workflows/hygiene-apply.yml): 手动运行, 或在审阅单上加 `apply` 标签. 操作者必须是 `HengXin666`

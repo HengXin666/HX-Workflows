@@ -13,7 +13,7 @@ import hygiene.decide as decide_module
 from hygiene.config import load_config, parse_config
 from hygiene.decide import classify, skill_source_after_rescan
 from hygiene.github_api import _frontmatter, branch_ref_path
-from hygiene.local_git import LocalRepo, clone_args
+from hygiene.local_git import LocalRepo, clone_args, git_env
 from hygiene.models import (
     BranchInfo,
     CanonicalSkill,
@@ -36,6 +36,8 @@ report_repository: HX-Workflows
 actor: HengXin666
 include_forks: false
 include_archived: false
+include_private: false
+active_within_days: 0
 skill_roots:
   - .agents/skills
 preferred_sources:
@@ -384,6 +386,42 @@ skill_roots:
         self.assertIn("包含私有仓库", body)
         self.assertIn(report.apply_url, body)
 
+    def test_private_skill_is_not_copied_out_as_canonical(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_private: true
+active_within_days: 0
+skill_roots:
+  - .agents/skills
+"""
+        )
+        report = classify(
+            [
+                snapshot("secret", private=True, skills=(skill("secret", "9.0", "private-tree"),)),
+                snapshot("HXLoLi", skills=(skill("HXLoLi", "2.3", "public-tree"),)),
+            ],
+            loaded,
+            "2026-10-18 18:00 +0800",
+            "",
+        )
+        self.assertEqual(report.canonical[0].repo, "HXLoLi")
+        self.assertEqual(report.skills_outdated, [])
+
+    def test_missing_active_window_defaults_to_one_year(self) -> None:
+        loaded = parse_config(
+            """
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+skill_roots:
+  - .agents/skills
+"""
+        )
+        self.assertEqual(loaded.active_within_days, 365)
+
     def test_same_unversioned_tree_is_not_a_version_mismatch(self) -> None:
         report = classify(
             [
@@ -501,11 +539,12 @@ skill_roots:
 
 
 class LocalGitTests(unittest.TestCase):
-    def test_clone_command_does_not_carry_the_token(self) -> None:
+    def test_clone_command_keeps_the_token_out_of_the_arguments(self) -> None:
+        token = "secret-token"
         args = clone_args("HengXin666", "HX-Workflows", Path("/tmp/example"))
-        self.assertNotIn("token", " ".join(args).lower())
+        self.assertNotIn(token, " ".join(args))
         self.assertIn("https://github.com/HengXin666/HX-Workflows.git", args)
-        self.assertIn("--filter=blob:none", args)
+        self.assertEqual(git_env(token)["GIT_CONFIG_VALUE_0"], f"AUTHORIZATION: bearer {token}")
 
     def test_local_repo_sees_merged_branch_and_skill_version(self) -> None:
         with tempfile.TemporaryDirectory() as directory:

@@ -119,7 +119,7 @@ def _render_issue(report: Report) -> str:
             f"- 跳过忽略名单: {report.repos_skipped_ignored}",
             f"- 跳过私有仓库: {report.repos_skipped_private}",
             f"- 纳入的私有仓库: {report.repos_private}",
-            f"- 跳过一年内没有推送的仓库: {report.repos_skipped_stale}",
+            f"- 跳过 {report.active_within_days} 天内没有推送的仓库: {report.repos_skipped_stale}",
             f"- 跳过受保护分支: {report.branches_skipped_protected}",
             f"- 跳过仍有拉取请求的分支: {report.branches_skipped_pr}",
             f"- 还有未合入提交的分支: {report.branches_not_merged}",
