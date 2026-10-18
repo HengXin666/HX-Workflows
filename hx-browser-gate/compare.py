@@ -70,6 +70,7 @@ def _stock(browser: str, headed: bool, label: str) -> dict:
     exe = _which(("google-chrome-stable", "google-chrome") if browser == "chrome" else ("firefox", "firefox-esr"))
     if not exe:
         return _missing(label, f"找不到{browser}")
+    driver = "chrome"
     from playwright.sync_api import sync_playwright
 
     with sync_playwright() as playwright:
@@ -80,14 +81,25 @@ def _stock(browser: str, headed: bool, label: str) -> dict:
                 args=["--no-sandbox", "--disable-dev-shm-usage"],
             )
         else:
-            launched = playwright.firefox.launch(executable_path=exe, headless=not headed)
+            launched, driver = _launch_firefox(playwright, exe, headed)
         context = launched.new_context(viewport={"width": 1280, "height": 900})
         payload = capture_pages(context, label)
         launched.close()
     payload["available"] = True
     payload["group"] = "stock"
     payload["headed"] = headed
+    payload["requestedHeaded"] = headed
+    payload["driver"] = driver
+    if driver == "playwright-firefox":
+        payload["note"] = "系统 Firefox 没法被 Playwright 接上，这一格用的是 Playwright 自带的 Firefox。"
     return payload
+
+
+def _launch_firefox(playwright, exe: str, headed: bool):
+    try:
+        return playwright.firefox.launch(executable_path=exe, headless=not headed), "system-firefox"
+    except Exception:
+        return playwright.firefox.launch(headless=not headed), "playwright-firefox"
 
 
 def _hx(kernel: str, headed: bool, label: str) -> dict:
@@ -191,7 +203,7 @@ def _gap(label: str, error: str, status: str = "missing") -> dict:
         "status": status,
         "error": error,
         "visits": [],
-        "note": "未安装和未测都不是 0 分。",
+        "note": "没装上，不是 0 分。" if status == "missing" else "没测成，不是 0 分。",
     }
 
 
