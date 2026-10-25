@@ -1,0 +1,77 @@
+name: 仓库卫生扫描
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_new:
+        description: "关闭未完成的审阅单并新建"
+        required: false
+        type: boolean
+        default: false
+      repo_limit:
+        description: "只扫描这些仓库, 用逗号分隔. 留空表示全部"
+        required: false
+        type: string
+        default: ""
+
+permissions:
+  contents: write
+  issues: write
+
+concurrency:
+  group: hygiene-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 安装卡片字体
+        run: sudo apt-get update && sudo apt-get install -y librsvg2-bin fonts-noto-cjk
+
+      - name: 扫描
+        id: scan
+        env:
+          HYGIENE_TOKEN: ${{ secrets.HYGIENE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO_LIMIT: ${{ inputs.repo_limit }}
+        run: |
+          if [ -z "$HYGIENE_TOKEN" ]; then
+            echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可读取全部仓库的 classic PAT, 权限勾选 repo."
+            exit 1
+          fi
+          PYTHONPATH=hygiene uv run --project hygiene python -m hygiene scan \
+            --config hygiene/config.yml \
+            --badges hygiene/badges \
+            --repo-limit "$REPO_LIMIT" \
+            --force-new "${{ inputs.force_new }}"
+
+      - name: 提交状态卡片
+        if: always() && steps.scan.outcome != 'cancelled'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add hygiene/badges
+          if git diff --cached --quiet; then
+            echo "状态卡片没有变化"
+          else
+            git commit -m "更新仓库卫生状态卡片"
+            branch="$(git rev-parse --abbrev-ref HEAD)"
+            git pull --rebase origin "$branch"
+            git push origin "$branch"
+          fi

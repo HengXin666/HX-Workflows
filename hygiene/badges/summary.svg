@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="640" height="228" viewBox="0 0 640 228" role="img" aria-label="仓库卫生">
+  <rect width="640" height="228" rx="16" fill="#f6f8fa"/>
+  <rect x="1" y="1" width="638" height="226" rx="15" fill="none" stroke="#d0d7de"/>
+  <text x="28" y="42" fill="#1f2328" font-size="22" font-weight="700" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">仓库卫生</text>
+  <text x="28" y="68" fill="#656d76" font-size="14" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">本次纳入 67 个仓库</text>
+  <g font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">
+    <text x="28" y="92" fill="#656d76" font-size="16">可删分支</text><text x="220" y="92" fill="#9a6700" font-size="16" font-weight="700">18</text><text x="28" y="124" fill="#656d76" font-size="16">过期 Skill</text><text x="220" y="124" fill="#9a6700" font-size="16" font-weight="700">5</text><text x="28" y="156" fill="#656d76" font-size="16">同版本分叉</text><text x="220" y="156" fill="#9a6700" font-size="16" font-weight="700">3</text>
+  </g>
+  <text x="28" y="204" fill="#656d76" font-size="13" font-family="Noto Sans CJK SC, WenQuanYi Zen Hei, PingFang SC, Microsoft YaHei, sans-serif">2026-10-18 20:24 +0800</text>
+</svg>
