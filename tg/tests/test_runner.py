@@ -13,7 +13,12 @@ import runner  # noqa: E402
 
 
 class SchedulingTests(unittest.TestCase):
+    # Agent Notes: HX-Workflows 接入 Agent Notes v2
+    # 
     def test_supported_schedule_expressions(self) -> None:
+        """Agent Notes
+        .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+        """
         now = dt.datetime(2026, 7, 18, 8, 30)
         self.assertTrue(runner.minute_matches("every:30", now))
         self.assertTrue(runner.minute_matches("hourly:30", now))

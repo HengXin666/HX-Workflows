@@ -2,6 +2,10 @@ import type { ButtonHTMLAttributes, HTMLAttributes, ReactNode } from "react";
 import * as Select from "@radix-ui/react-select";
 import { Check, ChevronDown } from "lucide-react";
 
+/**
+ * HX-Workflows 接入 Agent Notes v2
+ * .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+ */
 export function Card({ className = "", ...props }: HTMLAttributes<HTMLDivElement>) {
   return <div className={`rounded-2xl border border-slate-800/80 bg-slate-950/70 shadow-xl shadow-black/10 ${className}`} {...props} />;
 }

@@ -15,7 +15,12 @@ from bilibili_api.video import _sanitize_filename as sanitize_video_filename
 
 
 class SigningTests(unittest.TestCase):
+    # Agent Notes: HX-Workflows 接入 Agent Notes v2
+    # 
     def test_tv_signature_is_stable_and_does_not_mutate_input(self) -> None:
+        """Agent Notes
+        .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+        """
         source = {"bvid": "BV-test", "quality": 80}
         signer = BiliSigner(app_key="app", app_sec="secret")
         with patch("bilibili_api._core.time.time", return_value=1_700_000_000):

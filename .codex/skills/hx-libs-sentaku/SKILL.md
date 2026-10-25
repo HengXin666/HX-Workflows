@@ -9,6 +9,6 @@ description: "技术库选型路由技能。用于新项目、重构、生成编
 
 ## 路由
 
-- Python 后端库：读 [references/py/backend.md](references/py/backend.md)。
-- 数据库选择与驱动库：读 [references/db/database.md](references/db/database.md)。
-- React 前端库：读 [references/react/frontend.md](references/react/frontend.md)。
+- Python 后端库: 读 [references/py/backend.md](references/py/backend.md)
+- 数据库选择与驱动库: 读 [references/db/database.md](references/db/database.md)
+- React 前端库: 读 [references/react/frontend.md](references/react/frontend.md)

@@ -50,9 +50,13 @@ class BiliAPI:
     # ========== 用户信息 ==========
 
     def get_user_info(self) -> dict:
-        """获取当前用户信息，同时初始化 WBI 签名密钥"""
+        """
+        .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+获取当前用户信息，同时初始化 WBI 签名密钥"""
         token = self._token.get_token()
         params = self._signer.sign({"access_key": token["access_token"]})
+        # Agent Notes: HX-Workflows 接入 Agent Notes v2
+        # 
         resp = self.client.get("https://api.bilibili.com/x/web-interface/nav", params=params)
         data = resp.json()
         if data.get("code") != 0:

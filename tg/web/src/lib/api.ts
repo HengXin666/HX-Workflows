@@ -12,6 +12,10 @@ export class ApiError<T = unknown> extends Error {
   }
 }
 
+/**
+ * HX-Workflows 接入 Agent Notes v2
+ * .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+ */
 async function parseResponse<T>(response: Response): Promise<T> {
   if (!response.ok) {
     const text = await response.text();

@@ -1,22 +1,19 @@
-# AGENTS.md — Agent Notes
+# Agent Notes
 
-Agent Note 记录的是「为什么是这个形状, 以及为此放弃了什么」—— 代码和普通文档都放不下这两样.
-Agent 每次会话从零开始, 读到的只有当下的代码, 所以一个已权衡过的取舍在它眼里就是多余的复杂度,
-于是被"顺手简化"掉. Note 就是那道护栏.
+路径为 `.agents/notes/<implemented|proposed|rejected>/<class>/YYYY-MM-DD-topic.md`, class 为 architecture, feature, bug-fix, simplification, process, testing 之一. 使用仓库相对路径, 状态与路径一致
 
-- **路径即身份**: `.agents/notes/{lifecycle}/{class}/yyyy-mm-dd-topic.md`.
-- `proposed/` 是还没建的决策; `implemented/` 是已上线、且与代码保持同步的; `rejected/` 是输掉的
-  提案, 只在还能拦住一个有人可能重犯的错误时保留.
-- 极少数确实不需要 note 的受保护改动, 把理由写进本目录的 `NOTE-EXEMPT.md`:
-  `note-exempt: <为什么这次不需要 note>`, 覆盖率门禁会用这个豁免代替 note.
-- **一篇 note 只管一条决策.** 只有事实移动(路径、名字、默认值)时就地更新那篇;
-  绝不把它改写成另一条决策 —— 要取代它, 并双向互链.
-- **每一篇 active note 都要带 `## Alternatives considered`.** 没写打败了什么的决策, 会被重新论证.
-- **不要 `INDEX.md`**: 目录树本身就是索引; 一个共享索引会把每次并行改动都变成冲突.
-- archived/ 是冻结的. 已封存的 note 永不编辑、翻译、重排版或移动.
+每篇 note 具有唯一 `Decision-ID: lowercase-slug` 及非空 `## Code`, `## Problem`, `## Decision`, `## Alternatives considered`, `## Consequences`. `Code` 只写逐行的 `- ` 加反引号包裹的精确源码路径. 同一决策在每个直接父目录仅有一个代表文件和一个引用位置
 
-**小标题用英文, 正文随你.** `## Problem` / `## Decision` 这类标题是被机器校验的词元; 正文写中文
-(或任何语言)完全不影响门禁. 但别在一篇里混用两种语言的小标题.
+受保护的 shell, JSON, YAML 与文档等非 AST 资源发生 diff 时报告 resource-review, 请求人工核对决策和引用. 不声称 AST 已证明这些资源的双链
 
-动手改一个声明之前, 先读它旁边引用的那篇 note(任何 `.agents/notes/<lifecycle>/<class>/<file>.md` 路径).
-任何改动之后跑 `node .agents/skills/hx-agent-notes/scripts/verify-all.ts`; 动了受保护的源码, 就必须在同一次改动里带上 note.
+全量检查要求每个有受保护源码的直接父目录都有 active 决策. 未建双链的存量目录报告 unowned-directory, 父目录的 note 不覆盖子目录
+
+代表文件在函数或纯声明节点紧邻上方的多行块注释引用 note 的完整仓库相对路径. Python 使用紧邻函数定义的连续至少两行 `#` 注释或函数首条多行 docstring. 普通字符串, 文件头, 类上方及函数中段不算锚点
+
+以同一 diff 的旧图和新图核对关系. 任一端变化另一端没有变化即要求 review, 多目录决策每个目录分别核对. 修改同目录兄弟代码也触发配对. 删除和改名不能消除旧关系的责任
+
+废弃记录直接删除, 同时修复源码和 note 的入站链接. 历史由 Git 保留, 不生成新的 archive 或 seal. 现有归档仅作为迁移输入, 不作为当前代码的决策依据. 不写 INDEX.md, 不接受 NOTE-EXEMPT.md 放行
+
+项目入口委托 `.agents/skills/hx-agent-notes/scripts/redline/verify.py`, 使用 `--diff`, `--all`, `--staged`, `--base <commit> --head <commit>` 和 `--json <path>`. 本地退出码 0 通过, 1 违规或待 review, 2 工具或配置错误
+
+CI 用收集器保存原始诊断, 工作流始终容错完成. PR 问题评论到对应代码行, push 问题评论到对应提交片段, 无法行内定位时用精确路径与行号汇总. 双链仍必须匹配精确现存路径, 合法 AST 声明锚点和每目录唯一引用. 将实现与工作流交给独立 CODEOWNERS 审核, CI 成功不代表双链有效

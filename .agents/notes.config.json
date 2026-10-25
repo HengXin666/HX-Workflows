@@ -1,69 +1,8 @@
 {
-  "root": ".agents/notes",
-  "archive": "archived",
-  "lifecycles": [
-    "proposed",
-    "implemented",
-    "rejected"
-  ],
-  "classes": [
-    "feature",
-    "bug-fix",
-    "simplification",
-    "architecture",
-    "process",
-    "testing"
-  ],
-  "formatAdopted": "2026-07-05",
-  "coverage": {
-    "enabled": true,
-    "guarded": [
-      "scripts/**",
-      "bilibili-api/**",
-      "tg/**"
-    ],
-    "exempt": [
-      "**/*.md",
-      "**/*.test.*",
-      "**/*.spec.*",
-      "**/__snapshots__/**",
-      ".agents/**",
-      "**/.agents/**"
-    ],
-    "label": "note-exempt"
-  },
-  "backlinks": {
-    "enabled": true,
-    "required": false,
-    "roots": [
-      "bilibili-api",
-      "scripts",
-      "tg"
-    ],
-    "exclude": [
-      ".agents/**",
-      "**/.agents/**",
-      "**/*.spec.*",
-      "**/*.test.*"
-    ],
-    "extensions": [
-      ".ts",
-      ".tsx",
-      ".js",
-      ".mjs",
-      ".py",
-      ".go",
-      ".rs",
-      ".java",
-      ".kt",
-      ".rb",
-      ".php",
-      ".cs",
-      ".c",
-      ".cc",
-      ".cpp",
-      ".h",
-      ".hpp"
-    ]
-  }
+  "version": 2,
+  "guarded": [
+    "bilibili-api",
+    "scripts",
+    "tg"
+  ]
 }

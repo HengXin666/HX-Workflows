@@ -10,7 +10,12 @@ SKIP_DIRS = {".git", ".venv", "__pycache__", ".codex", ".claude", ".agents", "no
 MAX_LINES = 500
 
 
+# Agent Notes: HX-Workflows 接入 Agent Notes v2
+# 
 def python_files(roots: list[Path]) -> list[Path]:
+    """Agent Notes
+    .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+    """
     return sorted(
         path
         for root in roots

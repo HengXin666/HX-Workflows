@@ -38,7 +38,12 @@ class Task:
     foreach_secret_lines: str | None = None
 
 
+# Agent Notes: HX-Workflows 接入 Agent Notes v2
+# 
 def load_config(path: Path) -> dict[str, Any]:
+    """Agent Notes
+    .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
+    """
     if not path.exists():
         raise SystemExit(f"Config file not found: {path}")
     with path.open("r", encoding="utf-8") as f:

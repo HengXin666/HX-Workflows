@@ -4,7 +4,7 @@
 
 | 用途 | 默认选择 | 备注 | 官方来源 |
 | --- | --- | --- | --- |
-| Web 框架 | FastAPI | 默认推荐；适合现代 API 后端 | <https://fastapi.tiangolo.com/> |
+| Web 框架 | FastAPI | 默认推荐; 适合现代 API 后端 | <https://fastapi.tiangolo.com/> |
 | ASGI 运行 | Uvicorn | FastAPI 常用 ASGI server | <https://www.uvicorn.org/> |
 | 数据模型/校验 | Pydantic | FastAPI 默认生态 | <https://pydantic.dev/> |
 

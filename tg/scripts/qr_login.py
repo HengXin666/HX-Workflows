@@ -17,6 +17,10 @@ from telethon import TelegramClient, errors
 from telethon.sessions import StringSession
 
 ROOT = Path(__file__).resolve().parents[1]
+# Agent Notes: HX-Workflows 接入 Agent Notes v2
+# 
+# Agent Notes: HX-Workflows 接入 Agent Notes v2
+# .agents/notes/implemented/process/2026-10-08-repository-agent-notes-v2-adoption.md
 DEFAULT_OUT = ROOT / "sessions" / "tg_session_strings.txt"
 DEFAULT_API_ID = 611335
 DEFAULT_API_HASH = "d524b414d21f4d37f08684c1df41ac9c"
