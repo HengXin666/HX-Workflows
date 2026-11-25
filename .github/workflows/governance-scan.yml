@@ -1,0 +1,69 @@
+name: 仓库治理扫描
+
+on:
+  workflow_dispatch:
+    inputs:
+      force_new:
+        description: "关闭未完成的审阅单并新建"
+        required: false
+        type: boolean
+        default: false
+      repo_limit:
+        description: "只扫描这些仓库, 用逗号分隔. 留空表示全部. 只在日志里看结果, 不写审阅单"
+        required: false
+        type: string
+        default: ""
+  schedule:
+    - cron: "0 1 * * 1" # 每周一 09:00 (北京时间)
+
+permissions:
+  contents: read
+  issues: write
+
+concurrency:
+  group: governance-scan
+  cancel-in-progress: false
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 拉取仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 uv
+        uses: astral-sh/setup-uv@v5
+
+      - name: 设置 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: 扫描
+        env:
+          HYGIENE_TOKEN: ${{ secrets.HYGIENE_TOKEN }}
+          GITHUB_TOKEN: ${{ github.token }}
+          GITHUB_RUN_ID: ${{ github.run_id }}
+          GITHUB_SERVER_URL: ${{ github.server_url }}
+          GITHUB_REPOSITORY: ${{ github.repository }}
+          REPO_LIMIT: ${{ inputs.repo_limit }}
+          FORCE_NEW: ${{ inputs.force_new && 'true' || 'false' }}
+        run: |
+          if [ -z "$HYGIENE_TOKEN" ]; then
+            echo "缺少 Actions secret HYGIENE_TOKEN. 需要一个可读取全部仓库的 classic PAT, 权限勾选 repo 和 workflow."
+            exit 1
+          fi
+          PYTHONPATH=governance uv run --project governance python -m governance scan \
+            --config governance/config.yml \
+            --output governance/output \
+            --repo-limit "$REPO_LIMIT" \
+            --force-new "$FORCE_NEW"
+
+      - name: 保存扫描结果
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: governance-report
+          path: governance/output
+          if-no-files-found: ignore

@@ -45,6 +45,7 @@ jobs:
           uv sync --project emall
           uv sync --project tg
           uv sync --project hygiene
+          uv sync --project governance
 
       - name: Install web project
         run: npm ci --prefix tg/web

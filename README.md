@@ -6,6 +6,7 @@
 - [bilibili-api](./bilibili-api/)
 - [emall](./emall/)
 - [hygiene](./hygiene/)
+- [governance](./governance/)
 
 ## GitHub Actions
 
@@ -13,6 +14,8 @@
 - [Bilibili Token Refresh](./.github/workflows/bilibili-token-refresh.yml)
 - [仓库卫生扫描](./.github/workflows/hygiene-scan.yml)
 - [仓库卫生修复](./.github/workflows/hygiene-apply.yml)
+- [仓库治理扫描](./.github/workflows/governance-scan.yml)
+- [仓库治理修复](./.github/workflows/governance-apply.yml)
 
 ## 仓库卫生
 
@@ -26,6 +29,10 @@
 - [branches.svg](./hygiene/badges/branches.svg)
 - [skills.svg](./hygiene/badges/skills.svg)
 
+## 仓库治理
+
+[仓库治理](./governance/README.md) 每周扫描一次, 统一合并设置、Issue 表单、PR 模板、标签和提交规范. 勾选审阅单后为每个仓库开一个治理 PR, 公开仓库再加默认分支规则集. [待处理的审阅单](https://github.com/HengXin666/HX-Workflows/issues?q=is%3Aissue+is%3Aopen+label%3Agovernance-report)
+
 ## 文档
 
 - [TG 任务编排器](./tg/README.md)
@@ -38,6 +45,7 @@
 - [Bilibili API](./bilibili-api/README.md)
 - [邮件发送组件](./emall/README.md)
 - [仓库卫生](./hygiene/README.md)
+- [仓库治理](./governance/README.md)
 
 ## 配置入口
 
@@ -45,6 +53,7 @@
 - [TG 任务配置示例](./tg/config/tasks.example.yml)
 - [TG 签到配置](./tg/config/signins.yml)
 - [仓库卫生配置](./hygiene/config.yml)
+- [仓库治理配置](./governance/config.yml)
 
 ## 许可证
 

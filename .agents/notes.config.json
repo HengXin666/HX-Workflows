@@ -2,6 +2,7 @@
   "version": 2,
   "guarded": [
     "bilibili-api",
+    "governance",
     "scripts",
     "tg"
   ]

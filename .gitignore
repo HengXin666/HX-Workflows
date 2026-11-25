@@ -4,3 +4,5 @@ __pycache__/
 uv.lock
 .vscode/
 hygiene/output/
+governance/output/
+.pytest_cache/

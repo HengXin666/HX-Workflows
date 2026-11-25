@@ -1,0 +1,96 @@
+# 仓库治理配置. 说明见 governance/README.md
+owner: HengXin666
+report_repository: HX-Workflows
+actor: HengXin666
+include_forks: false
+include_archived: false
+include_private: true
+active_within_days: 365
+ignored_repositories: []
+
+# 提交规范
+commit_sample_size: 200        # 扫描时抽样默认分支最近多少个提交来判断风格
+default_style: conventional    # 新仓库和看不出风格的仓库: conventional = type(scope): 描述, bracket = [type]: 描述
+style_min_share: 0.3           # 某种风格至少占抽样提交 (不含合并提交) 的这个比例才算存量风格
+commit_types: [feat, fix, docs, style, refactor, perf, test, build, ci, chore, revert]
+max_header_length: 72          # 标题行 (含类型) 最多字符数
+pr_commits: warn               # PR 内单个提交不合规时: warn 只提示, error 让检查失败, off 不检查
+skip_bot_commits: true         # 推送检查跳过 xxx[bot] 的提交
+setup_branch: governance/setup # 写文件用的 PR 分支
+
+settings:
+  delete_branch_on_merge: true
+  allow_squash_merge: true
+  squash_merge_commit_title: PR_TITLE            # squash 时用 PR 标题作提交标题
+  squash_merge_commit_message: COMMIT_MESSAGES   # 正文用各提交明细, 不带 PR 模板里的勾选清单
+  disable_other_merge_methods: false             # true 时关掉 merge commit 和 rebase 合并
+
+ruleset:
+  enabled_for_public: true       # 公开仓库在默认分支上创建规则集: 必须走 PR 且 commit-lint 通过
+  name: governance-default-branch
+  required_check: commit-lint
+
+labels:
+  - name: "type: feat"
+    color: "1d76db"
+    description: "新功能或功能改进"
+    aliases: [enhancement]
+  - name: "type: fix"
+    color: "d73a4a"
+    description: "修复缺陷"
+    aliases: [bug]
+  - name: "type: docs"
+    color: "0075ca"
+    description: "文档"
+    aliases: [documentation]
+  - name: "type: refactor"
+    color: "c5def5"
+    description: "重构, 不改变行为"
+  - name: "type: perf"
+    color: "fbca04"
+    description: "性能优化"
+  - name: "type: test"
+    color: "bfd4f2"
+    description: "测试"
+  - name: "type: chore"
+    color: "ededed"
+    description: "杂项, 构建与依赖"
+  - name: "type: ci"
+    color: "5319e7"
+    description: "持续集成与工作流"
+  - name: "type: question"
+    color: "d876e3"
+    description: "提问与讨论"
+    aliases: [question]
+  - name: "status: triage"
+    color: "fef2c0"
+    description: "待分拣"
+  - name: "status: in-progress"
+    color: "0e8a16"
+    description: "处理中"
+  - name: "status: blocked"
+    color: "b60205"
+    description: "被阻塞"
+  - name: "priority: P0"
+    color: "b60205"
+    description: "紧急, 立即处理"
+  - name: "priority: P1"
+    color: "d93f0b"
+    description: "高, 本周处理"
+  - name: "priority: P2"
+    color: "fbca04"
+    description: "中, 排期处理"
+  - name: "priority: P3"
+    color: "c2e0c6"
+    description: "低, 有空再做"
+
+# 按仓库覆盖. 例:
+# overrides:
+#   HXLoLi:
+#     style: bracket          # 强制风格
+#     ruleset: false          # 不建规则集 (true 表示即使检测到工作流会推送默认分支也建)
+#     files: false            # 不开 PR 写文件
+#     labels: false
+#     settings: false
+#     overwrite_custom_files: true   # 覆盖仓库里已有的自定义模板
+overrides: {}
