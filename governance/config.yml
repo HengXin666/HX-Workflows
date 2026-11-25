@@ -93,4 +93,6 @@ labels:
 #     labels: false
 #     settings: false
 #     overwrite_custom_files: true   # 覆盖仓库里已有的自定义模板
-overrides: {}
+overrides:
+  HX-Workflows:
+    style: conventional
