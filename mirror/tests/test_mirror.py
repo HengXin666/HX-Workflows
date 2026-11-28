@@ -364,6 +364,9 @@ class EmailTest(unittest.TestCase):
         self.assertIn("1 项失败", email.subject)
         self.assertIn("今日更新 1 个", email.subject)
         self.assertIn("actions/runs/1", email.text)
+        self.assertIn("color-scheme:dark", email.html)
+        self.assertIn("📁</span><a href=\"https://gitlab.com/loli715548\"", email.html)
+        self.assertIn("max-width:560px", email.html)
         changed_section = email.text.split("今日有更新")[1].split("已配置的仓库")[0]
         self.assertNotIn("quiet", changed_section)
 

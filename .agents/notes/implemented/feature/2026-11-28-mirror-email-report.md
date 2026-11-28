@@ -15,11 +15,11 @@ Decision-ID: mirror-email-report
 
 ## Decision
 
-每次运行结束后发一封 HTML 邮件到用户自己的邮箱, 内容分四块: 目标平台 (存放的组织 / 用户链接与状态)、失败与提醒、今日同步 (只列真正有变化的仓库)、已配置的仓库 (每个仓库在各平台的镜像链接). 邮件用未脱敏的报告, 因为只发到私人邮箱; 日志只打印收件地址个数
+每次运行结束后发一封 HTML 邮件到用户自己的邮箱, 内容分四块: 概览数字、失败与提醒、今日同步 (只列真正有变化的仓库)、已配置的仓库 (按平台分文件夹树, 文件夹是组织 / 用户链接, 子项是各镜像仓库链接; 这样仓库多时也紧凑, 手机上不用横向滚动). 邮件用未脱敏的报告, 因为只发到私人邮箱; 日志只打印收件地址个数
 
 "今日同步" 的判定来自 `git push --porcelain`: 只有新增、更新、强制更新或删除的引用计数, `=` (已是最新) 不算; 新建仓库、改可见性、改默认分支也算有变化
 
-复用 emall 的 `SMTP_*` secrets, 新增可选的 `MIRROR_MAIL_TO` 覆盖收件人; `notify.email` 支持 always / failure / never. 没配 SMTP 只跳过; 配了但发送失败让工作流退出 1. 样式取 HX-UI 2 (`next/src/styles/theme.css`) 亮色令牌, 换成十六进制并内联, 用表格布局兼容邮件客户端
+复用 emall 的 `SMTP_*` secrets, 新增可选的 `MIRROR_MAIL_TO` 覆盖收件人; `notify.email` 支持 always / failure / never. 没配 SMTP 只跳过; 配了但发送失败让工作流退出 1. 样式取 HX-UI 2 (`next/src/styles/theme.css`) 的 `.dark` 暗色令牌, 换成十六进制并内联, 声明 `color-scheme: dark` 防止客户端反色; 单列、最宽 560px, 用表格布局兼容邮件客户端
 
 ## Alternatives considered
 

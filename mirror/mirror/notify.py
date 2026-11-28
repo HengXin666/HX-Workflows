@@ -1,7 +1,7 @@
 """Daily sync email: which repositories are configured, which changed today, what failed, and where each copy lives.
 
 The email goes only to the owner's mailbox, so it shows real private repository names; nothing here is written to
-logs or artifacts. Styling follows the HX-UI 2 light theme tokens, converted to hex and inlined for mail clients.
+logs or artifacts. Styling follows the HX-UI 2 dark theme tokens, converted to hex and inlined for mail clients.
 """
 
 from __future__ import annotations
@@ -19,30 +19,27 @@ from mirror.run import Outcome, RunReport
 
 BEIJING = timezone(timedelta(hours=8))
 
-# HX-UI 2 (next/src/styles/theme.css) light tokens, OKLCH converted to sRGB hex
+# HX-UI 2 (next/src/styles/theme.css) dark tokens (.dark), OKLCH converted to sRGB hex; soft = 16% over card
 INK = {
-    "background": "#fdfdfd",
-    "card": "#ffffff",
-    "foreground": "#0e0f12",
-    "muted": "#f3f4f5",
-    "muted_fg": "#666970",
-    "border": "#e3e4e7",
-    "primary": "#17181b",
-    "brand": "#5d67ee",
-    "brand_soft": "#ebecfd",
-    "success": "#16a356",
-    "success_soft": "#e3f4eb",
-    "success_text": "#0f7a40",
-    "warning": "#f09c17",
-    "warning_soft": "#fdf2e1",
-    "warning_text": "#a8650a",
-    "destructive": "#df2225",
-    "destructive_soft": "#fbe4e4",
-    "destructive_text": "#b81c1f",
+    "background": "#090a0c",
+    "card": "#111114",
+    "foreground": "#f4f5f6",
+    "muted": "#1c1d20",
+    "muted_fg": "#9b9ea6",
+    "border": "#262729",
+    "primary": "#f1f2f3",
+    "primary_fg": "#111114",
+    "brand": "#7989ff",
+    "brand_soft": "#212539",
+    "success": "#42c070",
+    "success_soft": "#192d23",
+    "warning": "#f5ae39",
+    "warning_soft": "#352b1a",
+    "destructive": "#fc5855",
+    "destructive_soft": "#361d1e",
 }
 FONT = '"Geist", ui-sans-serif, system-ui, -apple-system, "PingFang SC", "Microsoft YaHei", sans-serif'
 MONO = '"Geist Mono", "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo, monospace'
-SHADOW = "0 1px 2px rgba(0,0,0,0.04), 0 4px 16px -4px rgba(0,0,0,0.08)"
 PROVIDER_LABELS = {
     "gitlab": "GitLab",
     "gitee": "Gitee",
@@ -141,103 +138,90 @@ def _overall(report: RunReport) -> tuple[str, str]:
 
 def _badge(kind: str, text: str) -> str:
     colors = {
-        "ok": (INK["success_soft"], INK["success_text"]),
-        "warning": (INK["warning_soft"], INK["warning_text"]),
-        "failed": (INK["destructive_soft"], INK["destructive_text"]),
+        "ok": (INK["success_soft"], INK["success"]),
+        "warning": (INK["warning_soft"], INK["warning"]),
+        "failed": (INK["destructive_soft"], INK["destructive"]),
         "skipped": (INK["muted"], INK["muted_fg"]),
         "brand": (INK["brand_soft"], INK["brand"]),
     }
     background, color = colors.get(kind, colors["skipped"])
     return (
-        f'<span style="display:inline-block;padding:2px 8px;border-radius:999px;background:{background};'
-        f'color:{color};font-size:12px;line-height:18px;font-weight:500;white-space:nowrap;">{escape(text)}</span>'
+        f'<span style="display:inline-block;padding:1px 7px;border-radius:999px;background:{background};'
+        f'color:{color};font-size:11px;line-height:17px;font-weight:500;white-space:nowrap;vertical-align:1px;">{escape(text)}</span>'
     )
 
 
-def _link(url: str, text: str, mono: bool = False) -> str:
+def _link(url: str, text: str, mono: bool = False, muted: bool = False) -> str:
     family = f"font-family:{MONO};" if mono else ""
+    color = INK["muted_fg"] if muted else INK["foreground"]
     return (
-        f'<a href="{escape(url, quote=True)}" style="color:{INK["foreground"]};text-decoration:none;'
-        f'border-bottom:1px solid {INK["border"]};{family}">{escape(text)}</a>'
+        f'<a href="{escape(url, quote=True)}" style="color:{color};text-decoration:none;word-break:break-all;{family}">'
+        f"{escape(text)}</a>"
     )
 
 
-def _chip(url: str, text: str, kind: str) -> str:
-    dot = {"ok": INK["success"], "warning": INK["warning"], "failed": INK["destructive"]}.get(kind, INK["muted_fg"])
-    return (
-        f'<a href="{escape(url, quote=True)}" style="display:inline-block;margin:2px 4px 2px 0;padding:3px 10px;'
-        f'border:1px solid {INK["border"]};border-radius:8px;background:{INK["card"]};color:{INK["foreground"]};'
-        f'font-size:12px;line-height:18px;text-decoration:none;white-space:nowrap;">'
-        f'<span style="display:inline-block;width:6px;height:6px;border-radius:999px;background:{dot};'
-        f'margin-right:6px;vertical-align:middle;"></span>{escape(text)}</a>'
-    )
-
-
-def _card(title: str, body: str, subtitle: str = "") -> str:
-    sub = f'<div style="margin-top:2px;color:{INK["muted_fg"]};font-size:13px;">{escape(subtitle)}</div>' if subtitle else ""
-    return (
-        f'<tr><td style="padding:0 0 16px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
-        f'style="background:{INK["card"]};border:1px solid {INK["border"]};border-radius:12px;box-shadow:{SHADOW};">'
-        f'<tr><td style="padding:18px 20px 6px;"><div style="font-size:15px;font-weight:600;color:{INK["foreground"]};">'
-        f"{escape(title)}</div>{sub}</td></tr>"
-        f'<tr><td style="padding:6px 20px 18px;">{body}</td></tr></table></td></tr>'
-    )
-
-
-def _table(headers: list[str], rows: list[list[str]]) -> str:
-    head = "".join(
-        f'<th align="left" style="padding:8px 10px;border-bottom:1px solid {INK["border"]};color:{INK["muted_fg"]};'
-        f'font-size:12px;font-weight:500;">{escape(text)}</th>'
-        for text in headers
-    )
-    body = "".join(
-        "<tr>"
-        + "".join(
-            f'<td valign="top" style="padding:10px;border-bottom:1px solid {INK["muted"]};font-size:13px;'
-            f'color:{INK["foreground"]};">{cell}</td>'
-            for cell in row
-        )
-        + "</tr>"
-        for row in rows
+def _dot(kind: str) -> str:
+    color = {"ok": INK["success"], "warning": INK["warning"], "failed": INK["destructive"], "brand": INK["brand"]}.get(
+        kind, INK["muted_fg"]
     )
     return (
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;">'
-        f"<tr>{head}</tr>{body}</table>"
+        f'<span style="display:inline-block;width:7px;height:7px;border-radius:999px;background:{color};'
+        'margin-right:7px;vertical-align:1px;"></span>'
+    )
+
+
+def _card(title: str, body: str, aside: str = "") -> str:
+    side = f'<span style="float:right;color:{INK["muted_fg"]};font-size:12px;font-weight:400;">{aside}</span>' if aside else ""
+    return (
+        f'<tr><td style="padding:0 0 12px;"><table role="presentation" width="100%" cellpadding="0" cellspacing="0" '
+        f'style="background:{INK["card"]};border:1px solid {INK["border"]};border-radius:12px;">'
+        f'<tr><td style="padding:14px 16px 4px;font-size:14px;font-weight:600;color:{INK["foreground"]};">{side}'
+        f"{escape(title)}</td></tr>"
+        f'<tr><td style="padding:4px 16px 14px;">{body}</td></tr></table></td></tr>'
     )
 
 
 def _empty(text: str) -> str:
-    return f'<div style="padding:8px 0;color:{INK["muted_fg"]};font-size:13px;">{escape(text)}</div>'
+    return f'<div style="padding:4px 0;color:{INK["muted_fg"]};font-size:13px;">{escape(text)}</div>'
 
 
 def _stat(label: str, value: int, kind: str) -> str:
-    color = {"failed": INK["destructive"], "warning": INK["warning_text"], "brand": INK["brand"]}.get(kind, INK["foreground"])
+    color = {"failed": INK["destructive"], "warning": INK["warning"], "brand": INK["brand"]}.get(kind, INK["foreground"])
     return (
-        f'<td width="25%" style="padding:4px;"><div style="background:{INK["card"]};border:1px solid {INK["border"]};'
-        f'border-radius:12px;padding:14px 16px;box-shadow:{SHADOW};"><div style="color:{INK["muted_fg"]};font-size:12px;">'
-        f'{escape(label)}</div><div style="margin-top:4px;font-size:24px;font-weight:600;color:{color};">{value}</div>'
-        "</div></td>"
+        f'<td width="25%" align="center" style="padding:10px 2px;"><div style="font-size:20px;line-height:24px;'
+        f'font-weight:600;color:{color};">{value}</div><div style="margin-top:2px;color:{INK["muted_fg"]};font-size:11px;'
+        f'white-space:nowrap;">{escape(label)}</div></td>'
     )
 
 
-def _visibility(private: bool) -> str:
-    return _badge("skipped", "私有") if private else _badge("brand", "公开")
-
-
-def _target_rows(config: Config, report: RunReport) -> list[list[str]]:
+def _tree(lines: list[tuple[str, str]]) -> str:
+    """Folder-style rows: (content, note). The last child gets a closing branch."""
     rows = []
-    for target in config.targets:
-        problem = report.target_problems.get(target.name, "")
-        if not problem:
-            state = _badge("ok", "正常")
-        elif problem.startswith("跳过"):
-            state = _badge("skipped", "跳过") + f'<div style="margin-top:4px;color:{INK["muted_fg"]};">{escape(problem.removeprefix("跳过: "))}</div>'
-        else:
-            state = _badge("failed", "失败") + f'<div style="margin-top:4px;color:{INK["destructive_text"]};">{escape(problem)}</div>'
-        provider = PROVIDER_LABELS.get(target.provider, target.provider)
-        label = provider if target.name.lower() == target.provider else f"{target.name} ({provider})"
-        rows.append([escape(label), _link(owner_url(target), f"{target.base_url.split('://', 1)[-1]}/{target.owner}", True), state])
-    return rows
+    for index, (content, note) in enumerate(lines):
+        branch = "└" if index == len(lines) - 1 else "├"
+        right = f'<td align="right" valign="top" style="padding:3px 0 3px 8px;white-space:nowrap;">{note}</td>' if note else "<td></td>"
+        rows.append(
+            f'<tr><td width="18" valign="top" style="padding:3px 0;color:{INK["border"]};font-family:{MONO};font-size:13px;'
+            f'line-height:20px;">{branch}</td><td valign="top" style="padding:3px 0;font-size:13px;line-height:20px;">'
+            f"{content}</td>{right}</tr>"
+        )
+    return (
+        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="margin:0 0 4px 2px;">'
+        + "".join(rows)
+        + "</table>"
+    )
+
+
+def _folder(title: str, meta: str, children: str) -> str:
+    return (
+        f'<div style="margin:8px 0 2px;font-size:13px;line-height:20px;color:{INK["foreground"]};">'
+        f'<span style="font-size:14px;margin-right:6px;">📁</span>{title}'
+        f'<span style="color:{INK["muted_fg"]};"> {meta}</span></div>{children}'
+    )
+
+
+def _private_mark(private: bool) -> str:
+    return f'<span style="color:{INK["muted_fg"]};font-size:11px;margin-left:6px;">私有</span>' if private else ""
 
 
 def _actions_text(items: list[Outcome]) -> str:
@@ -246,7 +230,7 @@ def _actions_text(items: list[Outcome]) -> str:
         for action in item.actions:
             if not action.startswith("推送: 已是最新") and action not in seen:
                 seen.append(action)
-    return escape(", ".join(seen) or "已是最新")
+    return ", ".join(seen) or "已是最新"
 
 
 def render_email(config: Config, report: RunReport, run_url: str = "", now: datetime | None = None) -> Email:
@@ -271,91 +255,117 @@ def render_email(config: Config, report: RunReport, run_url: str = "", now: date
         PROVIDER_LABELS.get(t.provider, t.name) for t in config.targets if t.name not in report.target_problems
     ) or "无可用平台"
 
-    def chips(repo_name: str) -> str:
+    def mirror_links(repo_name: str) -> str:
         parts = []
         for item in by_repo.get(repo_name, []):
             target = targets.get(item.target)
             if target is None or item.skipped:
                 continue
-            parts.append(_chip(repo_url(target, item.target_repo), PROVIDER_LABELS.get(target.provider, target.name), _status(item)))
-        return "".join(parts) or _badge("skipped", "无")
-
-    def repo_cell(repo_name: str, private: bool) -> str:
-        return f"{_link(f'{source_url}/{repo_name}', repo_name, True)} {_visibility(private)}"
+            label = PROVIDER_LABELS.get(target.provider, target.name)
+            parts.append(_dot(_status(item)) + _link(repo_url(target, item.target_repo), label, muted=True))
+        return '<span style="margin-left:10px;"></span>'.join(parts)
 
     sections = []
-    sections.append(_card("目标平台", _table(["平台", "存放位置", "状态"], _target_rows(config, report))))
 
     if report.source_error or failed or warned:
         rows = []
         if report.source_error:
-            rows.append([escape("GitHub"), "-", _badge("failed", "失败"), escape(report.source_error)])
+            rows.append((f'{_dot("failed")}<b style="font-weight:500;">GitHub</b>', ""))
+            rows.append((f'<span style="color:{INK["muted_fg"]};">{escape(report.source_error)}</span>', ""))
         for item in failed + warned:
             target = targets.get(item.target)
-            where = _link(repo_url(target, item.target_repo), item.target) if target else escape(item.target)
-            detail = item.error or "; ".join(item.warnings)
+            where = _link(repo_url(target, item.target_repo), item.target, muted=True) if target else escape(item.target)
+            detail = (item.error or "; ".join(item.warnings))[:300]
             rows.append(
-                [
-                    escape(item.repo),
-                    where,
-                    _badge("failed", "失败") if item.error else _badge("warning", "提醒"),
-                    f'<span style="font-family:{MONO};font-size:12px;color:{INK["muted_fg"]};">{escape(detail[:400])}</span>',
-                ]
+                (
+                    f'{_dot("failed" if item.error else "warning")}{escape(item.repo)}'
+                    f'<span style="color:{INK["muted_fg"]};"> › </span>{where}'
+                    f'<div style="margin-top:2px;font-family:{MONO};font-size:11px;line-height:16px;color:{INK["muted_fg"]};'
+                    f'word-break:break-all;">{escape(detail)}</div>',
+                    "",
+                )
             )
-        sections.append(_card("失败与提醒", _table(["仓库", "平台", "状态", "原因"], rows)))
+        sections.append(_card("失败与提醒", _tree(rows), str(len(failed) + len(warned) + (1 if report.source_error else 0))))
 
     if changed:
         rows = [
-            [repo_cell(repo.name, repo.private), _actions_text(by_repo.get(repo.name, [])), chips(repo.name)]
+            (
+                f'{_link(f"{source_url}/{repo.name}", repo.name, True)}{_private_mark(repo.private)}'
+                f'<div style="color:{INK["muted_fg"]};font-size:12px;">{escape(_actions_text(by_repo.get(repo.name, [])))}</div>'
+                f'<div style="font-size:12px;">{mirror_links(repo.name)}</div>',
+                "",
+            )
             for repo in changed
         ]
-        sections.append(_card(f"今日同步 · {len(changed)} 个仓库有更新", _table(["仓库", "做了什么", "镜像"], rows)))
+        sections.append(_card(f"今日同步 · {len(changed)} 个仓库有更新", _tree(rows)))
     else:
         sections.append(_card("今日同步", _empty("今天没有仓库有新的提交、标签或设置变化, 各平台都已是最新.")))
 
+    folders = []
+    private_names = {repo.name for repo in repos if repo.private}
+    for target in config.targets:
+        provider = PROVIDER_LABELS.get(target.provider, target.provider)
+        location = _link(owner_url(target), f"{provider} · {target.owner}")
+        problem = report.target_problems.get(target.name, "")
+        items = [item for item in report.outcomes if item.target == target.name]
+        if problem:
+            kind_ = "skipped" if problem.startswith("跳过") else "failed"
+            folders.append(_folder(location, _badge(kind_, "跳过" if kind_ == "skipped" else "失败"), _tree([(
+                f'<span style="color:{INK["muted_fg"]};font-size:12px;">{escape(problem.removeprefix("跳过: "))}</span>', "")])))
+            continue
+        ok = sum(1 for item in items if _status(item) == "ok")
+        rows = []
+        for item in sorted(items, key=lambda i: i.repo.lower()):
+            if item.skipped:
+                continue
+            note = _badge("brand", "更新") if item.changed else ""
+            rows.append((
+                _dot(_status(item)) + _link(repo_url(target, item.target_repo), item.target_repo, True)
+                + _private_mark(item.repo in private_names), note))
+        folders.append(_folder(location, f"{ok}/{len(rows)}", _tree(rows) if rows else _empty("没有仓库")))
     excluded = len(report.skipped_repos)
-    note = f"另有 {excluded} 个仓库按配置规则不同步" if excluded else ""
-    rows = [[repo_cell(repo.name, repo.private), chips(repo.name)] for repo in repos]
-    sections.append(
-        _card(
-            f"已配置的仓库 · {len(repos)} 个",
-            _table(["仓库", "镜像 (点击打开)"], rows) if rows else _empty("没有仓库在同步范围内."),
-            note,
-        )
+    tail = (
+        f'<div style="margin-top:8px;color:{INK["muted_fg"]};font-size:12px;">另有 {excluded} 个仓库按配置规则不同步</div>'
+        if excluded
+        else ""
     )
+    sections.append(_card(f"已配置的仓库 · {len(repos)} 个", "".join(folders) + tail, "点仓库名打开镜像"))
 
     button = (
         f'<a href="{escape(run_url, quote=True)}" style="display:inline-block;padding:9px 16px;border-radius:10px;'
-        f'background:{INK["primary"]};color:#ffffff;font-size:13px;font-weight:500;text-decoration:none;">查看本次运行</a>'
+        f'background:{INK["primary"]};color:{INK["primary_fg"]};font-size:13px;font-weight:500;text-decoration:none;">查看本次运行</a>'
         if run_url
         else ""
     )
     stats = (
-        '<table role="presentation" width="100%" cellpadding="0" cellspacing="0"><tr>'
-        + _stat("已配置仓库", len(repos), "")
-        + _stat("今日有更新", len(changed), "brand")
+        f'<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{INK["card"]};'
+        f'border:1px solid {INK["border"]};border-radius:12px;"><tr>'
+        + _stat("已配置", len(repos), "")
+        + _stat("今日更新", len(changed), "brand")
         + _stat("失败", len(failed) + (1 if report.source_error else 0), "failed" if failed or report.source_error else "")
         + _stat("提醒", len(warned), "warning" if warned else "")
         + "</tr></table>"
     )
     html = f"""<!doctype html>
 <html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>{escape(day)} 镜像同步</title></head>
-<body style="margin:0;padding:0;background:{INK["background"]};font-family:{FONT};color:{INK["foreground"]};">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="background:{INK["background"]};">
-<tr><td align="center" style="padding:28px 12px;">
-<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:680px;">
-<tr><td style="padding:0 4px 18px;">
-  <div style="font-size:12px;color:{INK["muted_fg"]};letter-spacing:0.02em;">
-    <span style="display:inline-block;width:8px;height:8px;border-radius:999px;background:{INK["brand"]};margin-right:6px;"></span>HX-Workflows · 多平台镜像同步</div>
-  <div style="margin-top:10px;font-size:22px;font-weight:600;letter-spacing:-0.01em;">{escape(day)} 同步报告{escape(dry)} {_badge(kind, verdict)}</div>
-  <div style="margin-top:6px;font-size:13px;color:{INK["muted_fg"]};">{_link(source_url, f"GitHub {config.source.owner}")} → {escape(platform_names)}</div>
+<meta name="color-scheme" content="dark"><meta name="supported-color-schemes" content="dark">
+<title>{escape(day)} 镜像同步</title>
+<style>:root{{color-scheme:dark;}} @media (max-width:480px){{.wrap{{padding:14px 8px !important;}}}}</style></head>
+<body style="margin:0;padding:0;background:{INK["background"]};font-family:{FONT};color:{INK["foreground"]};-webkit-text-size-adjust:100%;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" bgcolor="{INK["background"]}" style="background:{INK["background"]};">
+<tr><td class="wrap" align="center" style="padding:24px 12px;">
+<table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:560px;">
+<tr><td style="padding:0 2px 14px;">
+  <div style="font-size:12px;color:{INK["muted_fg"]};">{_dot("brand")}HX-Workflows · 多平台镜像同步</div>
+  <div style="margin-top:8px;font-size:20px;line-height:28px;font-weight:600;color:{INK["foreground"]};">{escape(day)} 同步报告{escape(dry)}</div>
+  <div style="margin-top:6px;">{_badge(kind, verdict)}</div>
+  <div style="margin-top:8px;font-size:12px;color:{INK["muted_fg"]};">{_link(source_url, f"GitHub · {config.source.owner}", muted=True)} → {escape(platform_names)}</div>
 </td></tr>
-<tr><td style="padding:0 0 16px;">{stats}</td></tr>
+<tr><td style="padding:0 0 12px;">{stats}</td></tr>
 {"".join(sections)}
-<tr><td style="padding:4px 4px 0;">{button}
-  <div style="margin-top:14px;font-size:12px;line-height:18px;color:{INK["muted_fg"]};">
-    这封邮件含私有仓库名, 只发到你配置的邮箱, 不会出现在公开的运行日志里. 生成于 {escape(when.strftime("%Y-%m-%d %H:%M"))} (北京时间).</div>
+<tr><td style="padding:4px 2px 0;">{button}
+  <div style="margin-top:12px;font-size:11px;line-height:17px;color:{INK["muted_fg"]};">
+    含私有仓库名, 只发到你配置的邮箱, 不会出现在公开的运行日志里. 生成于 {escape(when.strftime("%Y-%m-%d %H:%M"))} (北京时间).</div>
 </td></tr>
 </table></td></tr></table></body></html>"""
 
