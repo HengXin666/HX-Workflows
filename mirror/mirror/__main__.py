@@ -4,13 +4,16 @@ from __future__ import annotations
 
 import argparse
 import os
+import smtplib
 import sys
+from collections.abc import Mapping
 from pathlib import Path
 
-from mirror.config import load_config
+from mirror.config import Config, load_config
+from mirror.notify import load_mail_config, render_email, send_email, should_send
 from mirror.plan import parse_limit
 from mirror.report import write_reports
-from mirror.run import run
+from mirror.run import RunReport, run
 from mirror.source import GitHubSource
 
 
@@ -24,6 +27,7 @@ def main(argv: list[str] | None = None) -> int:
     sync.add_argument("--cache", type=Path, default=Path(".mirror-cache"), help="源仓库裸镜像缓存目录")
     sync.add_argument("--output", type=Path, default=Path("mirror/output"))
     sync.add_argument("--reveal-private", action="store_true", help="报告里显示私有仓库真名 (只在本地用)")
+    sync.add_argument("--no-email", action="store_true", help="不发同步邮件")
     args = parser.parse_args(argv)
 
     try:
@@ -45,7 +49,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     write_reports(report, args.output, os.environ.get("GITHUB_STEP_SUMMARY"), args.reveal_private)
     print((args.output / "report.md").read_text(encoding="utf-8"))
-    return 1 if report.failed else 0
+    mail_failed = False if args.no_email else notify(config, report)
+    return 1 if report.failed or mail_failed else 0
+
+
+def run_url(env: Mapping[str, str]) -> str:
+    server, repository, run_id = env.get("GITHUB_SERVER_URL", ""), env.get("GITHUB_REPOSITORY", ""), env.get("GITHUB_RUN_ID", "")
+    return f"{server}/{repository}/actions/runs/{run_id}" if server and repository and run_id else ""
+
+
+def notify(config: Config, report: RunReport, env: Mapping[str, str] | None = None, smtp_factory: object = None) -> bool:
+    """Send the sync email. Returns True when sending failed; missing SMTP secrets only skip."""
+    env = os.environ if env is None else env
+    if not should_send(config.notify.email, report):
+        print(f"邮件: notify.email={config.notify.email}, 本次不发送")
+        return False
+    mail = load_mail_config(env, config.notify.mail_to_env)
+    if mail is None:
+        print(f"邮件: 没有配置 SMTP_HOST / SMTP_USERNAME / SMTP_PASSWORD / SMTP_TO (或 {config.notify.mail_to_env}), 跳过")
+        return False
+    try:
+        send_email(mail, render_email(config, report, run_url(env)), smtp_factory)  # type: ignore[arg-type]
+    except (OSError, smtplib.SMTPException) as error:
+        print(f"邮件发送失败: {type(error).__name__}: {error}", file=sys.stderr)
+        return True
+    print(f"邮件: 已发送到 {len(mail.mail_to)} 个收件地址")
+    return False
 
 
 if __name__ == "__main__":

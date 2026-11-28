@@ -20,6 +20,12 @@ policy:
   max_retries: 3         # 网络等临时失败的重试次数
   git_timeout: 1800      # 单次 git 拉取/推送的超时秒数
 
+# 每次运行后发一封同步邮件: 配置了哪些仓库、今天同步了哪些、失败情况、各平台的链接.
+# 复用 emall 的 SMTP_* secrets; 想发到别的邮箱就加 secret MIRROR_MAIL_TO (多个用逗号分隔), 它优先于 SMTP_TO.
+notify:
+  email: always          # always = 每次都发; failure = 只在有失败或提醒时发; never = 不发
+  mail_to_env: MIRROR_MAIL_TO
+
 # 每个平台一段. 没配 token_env 对应 secret 的平台会自动跳过, 所以不用的平台可以留着.
 targets:
   - name: gitlab

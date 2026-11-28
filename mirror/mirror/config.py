@@ -11,6 +11,7 @@ import yaml
 
 PROVIDERS = ("gitlab", "gitee", "codeberg", "forgejo", "gitea", "cnb")
 VISIBILITIES = ("follow", "private", "public")
+EMAIL_MODES = ("always", "failure", "never")
 ENV_NAME = re.compile(r"^[A-Z][A-Z0-9_]*$")
 DEFAULT_URLS: dict[str, tuple[str, str]] = {
     "gitlab": ("https://gitlab.com", "https://gitlab.com/api/v4"),
@@ -61,10 +62,17 @@ class Policy:
 
 
 @dataclass(frozen=True)
+class Notify:
+    email: str = "always"
+    mail_to_env: str = "MIRROR_MAIL_TO"
+
+
+@dataclass(frozen=True)
 class Config:
     source: SourceConfig
     targets: tuple[TargetConfig, ...]
     policy: Policy = field(default_factory=Policy)
+    notify: Notify = field(default_factory=Notify)
 
     def visibility_for(self, target: TargetConfig) -> str:
         return target.visibility or self.policy.visibility
@@ -200,7 +208,12 @@ def parse_config(data: object) -> Config:
     duplicated = sorted({name for name in names if names.count(name) > 1})
     if duplicated:
         raise ValueError(f"targets 的 name 重复: {', '.join(duplicated)}")
-    return Config(source=source, targets=targets, policy=policy)
+    notify_raw = _table(root.get("notify"), "notify")
+    email = notify_raw.get("email", "always")
+    if email not in EMAIL_MODES:
+        raise ValueError(f"配置 notify.email 只能是 {' / '.join(EMAIL_MODES)}")
+    notify = Notify(email=str(email), mail_to_env=_env(notify_raw, "mail_to_env", "MIRROR_MAIL_TO"))
+    return Config(source=source, targets=targets, policy=policy, notify=notify)
 
 
 def load_config(path: Path) -> Config:

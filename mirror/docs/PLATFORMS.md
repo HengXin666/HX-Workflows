@@ -148,7 +148,13 @@
 
 ---
 
-## 5. 全部配好之后
+## 5. 同步邮件 (可选)
+
+想每天收到同步邮件, 在 secrets 里加 `SMTP_HOST`、`SMTP_USERNAME`、`SMTP_PASSWORD` 和收件邮箱 `MIRROR_MAIL_TO` (或复用 `SMTP_TO`). emall 已经配过 SMTP 的话只需要加 `MIRROR_MAIL_TO`, 甚至什么都不用加. 详见 [README 的「同步邮件」](../README.md#同步邮件).
+
+---
+
+## 6. 全部配好之后
 
 1. 打开 [Actions → 多平台镜像同步](https://github.com/HengXin666/HX-Workflows/actions/workflows/mirror-sync.yml), 点 **Run workflow**, 勾选 **dry_run**.
 2. 看这次运行的 **Summary**: 「目标平台」一栏里

@@ -17,6 +17,7 @@ from mirror.plan import SourceRepo, plan_repo, selected, source_skip_reason, tar
 from mirror.targets import Target, build_target
 
 T = TypeVar("T")
+CHANGE_ACTIONS = ("新建", "可见性改为", "默认分支改为")
 
 
 class Source(Protocol):
@@ -35,12 +36,19 @@ class Outcome:
     error: str = ""
     skipped: str = ""
     private: bool = False
+    updated_refs: int = 0
+
+    @property
+    def changed(self) -> bool:
+        """Something reached the target this run: new commits or tags, a new repository, or a visibility change."""
+        return bool(self.updated_refs) or any(action.startswith(CHANGE_ACTIONS) for action in self.actions)
 
 
 @dataclass
 class RunReport:
     dry_run: bool
     outcomes: list[Outcome] = field(default_factory=list)
+    repos: list[SourceRepo] = field(default_factory=list)
     skipped_repos: dict[str, str] = field(default_factory=dict)
     private_repos: set[str] = field(default_factory=set)
     target_problems: dict[str, str] = field(default_factory=dict)
@@ -135,8 +143,10 @@ def sync_target(repo: SourceRepo, mirror_dir: Path | None, target: Target, confi
             outcome.actions.append("源仓库为空, 只建仓不推送")
             return outcome
         retry(lambda: target.before_push(name), attempts)
-        retry(lambda: git.push_mirror(mirror_dir, target.push_url(name), target.credentials(), config.policy.prune), attempts)
-        outcome.actions.append("推送分支和标签")
+        outcome.updated_refs = retry(
+            lambda: git.push_mirror(mirror_dir, target.push_url(name), target.credentials(), config.policy.prune), attempts
+        )
+        outcome.actions.append(f"推送 {outcome.updated_refs} 个分支/标签" if outcome.updated_refs else "推送: 已是最新")
         if repo.default_branch:
             current = target.get(name)
             if current is not None and current.default_branch and current.default_branch != repo.default_branch:
@@ -197,6 +207,7 @@ def run(
             report.skipped_repos[repo.name] = reason
         else:
             chosen.append(repo)
+    report.repos = chosen
     cache.mkdir(parents=True, exist_ok=True)
     git = Git(config.policy.git_timeout)
     try:

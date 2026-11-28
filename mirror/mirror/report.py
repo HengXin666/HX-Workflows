@@ -38,6 +38,7 @@ def mask_report(report: RunReport) -> RunReport:
     return replace(
         report,
         outcomes=[hide_outcome(item) for item in report.outcomes],
+        repos=[replace(repo, name=masked_name(repo.name), description="") if repo.private else repo for repo in report.repos],
         skipped_repos={(masked_name(k) if k in report.private_repos else k): v for k, v in report.skipped_repos.items()},
         target_problems={k: hide(v) for k, v in report.target_problems.items()},
         source_error=hide(report.source_error),

@@ -60,8 +60,19 @@ class Git:
     def has_refs(self, directory: Path) -> bool:
         return bool(self._run(["for-each-ref", "--count=1", "refs/heads", "refs/tags"], directory, None).strip())
 
-    def push_mirror(self, directory: Path, url: str, credentials: tuple[str, str] | None, prune: bool) -> None:
-        args = ["push", "--force", "--quiet"]
+    def push_mirror(self, directory: Path, url: str, credentials: tuple[str, str] | None, prune: bool) -> int:
+        """Push branches and tags; returns how many refs on the target actually changed."""
+        args = ["push", "--force", "--porcelain"]
         if prune:
             args.append("--prune")
-        self._run([*args, url, *REFSPECS], directory, credentials)
+        output = self._run([*args, url, *REFSPECS], directory, credentials)
+        return count_updated_refs(output)
+
+
+def count_updated_refs(porcelain: str) -> int:
+    """git push --porcelain marks each ref with a flag; "=" means already up to date."""
+    count = 0
+    for line in porcelain.splitlines():
+        if "\t" in line and line[:1] in {" ", "+", "-", "*"}:
+            count += 1
+    return count

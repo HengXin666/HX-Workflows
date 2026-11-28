@@ -46,6 +46,15 @@ jobs:
           GITEE_TOKEN: ${{ secrets.GITEE_TOKEN }}
           CODEBERG_TOKEN: ${{ secrets.CODEBERG_TOKEN }}
           CNB_TOKEN: ${{ secrets.CNB_TOKEN }}
+          SMTP_HOST: ${{ secrets.SMTP_HOST }}
+          SMTP_PORT: ${{ secrets.SMTP_PORT }}
+          SMTP_USERNAME: ${{ secrets.SMTP_USERNAME }}
+          SMTP_PASSWORD: ${{ secrets.SMTP_PASSWORD }}
+          SMTP_FROM: ${{ secrets.SMTP_FROM }}
+          SMTP_TO: ${{ secrets.SMTP_TO }}
+          SMTP_USE_SSL: ${{ secrets.SMTP_USE_SSL }}
+          SMTP_STARTTLS: ${{ secrets.SMTP_STARTTLS }}
+          MIRROR_MAIL_TO: ${{ secrets.MIRROR_MAIL_TO }}
           REPO_LIMIT: ${{ inputs.repo_limit }}
           DRY_RUN: ${{ inputs.dry_run && '--dry-run' || '' }}
         run: |

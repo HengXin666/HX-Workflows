@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+import smtplib
 import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from mirror.__main__ import notify
 from mirror.config import TargetConfig, parse_config
-from mirror.git_ops import GitError
+from mirror.git_ops import GitError, count_updated_refs
 from mirror.http_client import HttpError
+from mirror.notify import load_mail_config, render_email, should_send
 from mirror.plan import RemoteRepo, SourceRepo, plan_repo, source_skip_reason
 from mirror.report import mask_report, render_markdown, write_reports
 from mirror.run import Outcome, RunReport, prepare_targets, retry, run
@@ -230,6 +233,12 @@ class RunTest(unittest.TestCase):
         self.assertEqual(target.created, [("repo", True)])
         refs = git("for-each-ref", "--format=%(refname)", cwd=remote).split()
         self.assertEqual(sorted(refs), ["refs/heads/dev", "refs/heads/main", "refs/tags/v1"])
+        self.assertEqual(report.outcomes[0].updated_refs, 3)
+        self.assertTrue(report.outcomes[0].changed)
+        self.assertEqual([repo.name for repo in report.repos], ["repo"])
+        again = run(config(), source, targets=[target], cache=self.root / "cache")  # type: ignore[arg-type]
+        self.assertEqual(again.outcomes[0].updated_refs, 0)
+        self.assertFalse(again.outcomes[0].changed)
 
     def test_dry_run_writes_nothing(self) -> None:
         target = FakeTarget(existing={"repo": RemoteRepo("repo", private=True)})
@@ -285,6 +294,112 @@ class ReportTest(unittest.TestCase):
         self.assertIn("open", text)
         self.assertIn("secret-repo", render_markdown(report))
         self.assertEqual(mask_report(RunReport(dry_run=True)).outcomes, [])
+
+
+MAIL_ENV = {"SMTP_HOST": "smtp.example.test", "SMTP_USERNAME": "bot@example.test", "SMTP_PASSWORD": "pw", "SMTP_TO": "me@example.test"}
+
+
+def email_report() -> RunReport:
+    """
+    Build a run with one updated private repo, one unchanged repo, one failure and one skipped platform
+    .agents/notes/implemented/feature/2026-11-28-mirror-email-report.md
+    """
+    report = RunReport(dry_run=False, private_repos={"secret-repo"})
+    report.repos = [SourceRepo("secret-repo", private=True), SourceRepo("quiet", private=False), SourceRepo("broken", private=False)]
+    report.outcomes += [
+        Outcome(repo="secret-repo", target="gitlab", target_repo="secret-repo", actions=["新建 (私有)", "推送 3 个分支/标签"], private=True, updated_refs=3),
+        Outcome(repo="quiet", target="gitlab", target_repo="quiet", actions=["推送: 已是最新"]),
+        Outcome(repo="broken", target="gitlab", target_repo="broken", error="git push 失败: rejected"),
+    ]
+    report.target_problems["gitee"] = "跳过: 没有配置 secret GITEE_TOKEN"
+    return report
+
+
+def mail_config() -> object:
+    data = {
+        **BASE,
+        "targets": [
+            {"name": "gitlab", "provider": "gitlab", "owner": "loli715548", "token_env": "GITLAB_TOKEN"},
+            {"name": "gitee", "provider": "gitee", "owner": "Heng_Xin_666", "token_env": "GITEE_TOKEN"},
+        ],
+    }
+    return parse_config(data)
+
+
+class FakeSmtp:
+    sent: list[object] = []
+    fail = False
+
+    def __init__(self, host: str, port: int, timeout: int) -> None:
+        self.host = host
+
+    def __enter__(self) -> "FakeSmtp":
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def starttls(self) -> None:
+        return None
+
+    def login(self, user: str, password: str) -> None:
+        if FakeSmtp.fail:
+            raise smtplib.SMTPAuthenticationError(535, b"bad")
+
+    def send_message(self, message: object) -> None:
+        FakeSmtp.sent.append(message)
+
+
+class EmailTest(unittest.TestCase):
+    def test_email_lists_configured_changed_failed_and_links(self) -> None:
+        email = render_email(mail_config(), email_report(), "https://github.com/HengXin666/HX-Workflows/actions/runs/1")  # type: ignore[arg-type]
+        self.assertIn("secret-repo", email.html)
+        self.assertIn("https://gitlab.com/loli715548/secret-repo", email.html)
+        self.assertIn("https://github.com/HengXin666/secret-repo", email.html)
+        self.assertIn("https://gitlab.com/loli715548", email.html)
+        self.assertIn("今日同步 · 1 个仓库有更新", email.html)
+        self.assertIn("已配置的仓库 · 3 个", email.html)
+        self.assertIn("git push 失败: rejected", email.html)
+        self.assertIn("GITEE_TOKEN", email.html)
+        self.assertIn("1 项失败", email.subject)
+        self.assertIn("今日更新 1 个", email.subject)
+        self.assertIn("actions/runs/1", email.text)
+        changed_section = email.text.split("今日有更新")[1].split("已配置的仓库")[0]
+        self.assertNotIn("quiet", changed_section)
+
+    def test_quiet_day_says_everything_is_current(self) -> None:
+        report = RunReport(dry_run=False, repos=[SourceRepo("quiet", private=False)])
+        report.outcomes.append(Outcome(repo="quiet", target="gitlab", target_repo="quiet", actions=["推送: 已是最新"]))
+        email = render_email(mail_config(), report)  # type: ignore[arg-type]
+        self.assertIn("全部成功", email.subject)
+        self.assertIn("都已是最新", email.html)
+
+    def test_mail_config_and_send_modes(self) -> None:
+        self.assertIsNone(load_mail_config({"SMTP_HOST": "x"}))
+        mail = load_mail_config({**MAIL_ENV, "MIRROR_MAIL_TO": "a@x.test; b@x.test"})
+        assert mail is not None
+        self.assertEqual(mail.mail_to, ("a@x.test", "b@x.test"))
+        self.assertTrue(mail.use_ssl)
+        quiet = RunReport(dry_run=False)
+        self.assertFalse(should_send("failure", quiet))
+        self.assertTrue(should_send("failure", email_report()))
+        self.assertFalse(should_send("never", email_report()))
+        with self.assertRaises(ValueError):
+            parse_config({**BASE, "notify": {"email": "sometimes"}})
+
+    def test_notify_sends_skips_and_reports_failure(self) -> None:
+        FakeSmtp.sent, FakeSmtp.fail = [], False
+        cfg = mail_config()
+        self.assertFalse(notify(cfg, email_report(), MAIL_ENV, FakeSmtp))  # type: ignore[arg-type]
+        self.assertEqual(len(FakeSmtp.sent), 1)
+        self.assertFalse(notify(cfg, email_report(), {}, FakeSmtp))  # type: ignore[arg-type]
+        self.assertEqual(len(FakeSmtp.sent), 1)
+        FakeSmtp.fail = True
+        self.assertTrue(notify(cfg, email_report(), MAIL_ENV, FakeSmtp))  # type: ignore[arg-type]
+
+    def test_porcelain_counts_only_changed_refs(self) -> None:
+        output = "To x\n*\trefs/heads/main:refs/heads/main\t[new branch]\n=\trefs/tags/v1:refs/tags/v1\t[up to date]\n+\trefs/heads/dev:refs/heads/dev\tabc...def (forced update)\nDone\n"
+        self.assertEqual(count_updated_refs(output), 2)
 
 
 class RetryTest(unittest.TestCase):
