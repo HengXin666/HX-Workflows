@@ -30,7 +30,7 @@ targets:
 
   - name: gitee
     provider: gitee
-    owner: HengXin666            # Gitee 个人空间地址或组织 path
+    owner: Heng_Xin_666          # Gitee 个人空间地址 (https://gitee.com/Heng_Xin_666)
     token_env: GITEE_TOKEN
     # Gitee 不允许以 . 开头的仓库名, 按需排除或改名:
     # exclude: [".github"]
