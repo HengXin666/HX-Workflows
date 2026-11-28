@@ -24,7 +24,7 @@ policy:
 targets:
   - name: gitlab
     provider: gitlab
-    owner: HengXin666            # GitLab 用户名或群组路径 (可以是 group/subgroup)
+    owner: loli715548            # GitLab 群组路径 (https://gitlab.com/loli715548); 群组是私有的话, 公开仓库会建不出来, 见 docs/PLATFORMS.md
     token_env: GITLAB_TOKEN
     base_url: https://gitlab.com # 自建 GitLab 改成你的域名, api_url 自动拼 /api/v4
 
