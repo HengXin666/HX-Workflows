@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import re
 import subprocess
 import tempfile
 import unittest
@@ -50,6 +51,15 @@ from governance.templates import (
 )
 
 ROOT = Path(__file__).resolve().parents[1]
+
+_OVERRIDES_BLOCK = re.search(r"(?ms)^overrides:.*\Z", (ROOT / "config.yml").read_text(encoding="utf-8")).group(0)
+
+
+def _with_overrides(block: str) -> str:
+    """Real config.yml with its trailing overrides block swapped, whatever the repo sets there."""
+    return (ROOT / "config.yml").read_text(encoding="utf-8").replace(_OVERRIDES_BLOCK, block)
+
+
 CONFIG = load_config(ROOT / "config.yml")
 HEAD = "a" * 40
 GOOD_SETTINGS = {
@@ -307,7 +317,7 @@ class DecisionTest(unittest.TestCase):
     def test_override_and_reviewed_style(self) -> None:
         snapshot = make_snapshot(headers=["[fix]: a"] * 5)
         self.assertEqual(choose_style(detect_style(snapshot.headers), CONFIG, snapshot, "conventional"), ("conventional", "reviewed"))
-        forced = parse_config((ROOT / "config.yml").read_text(encoding="utf-8").replace("overrides: {}", "overrides:\n  demo:\n    style: conventional\n"))
+        forced = parse_config(_with_overrides("overrides:\n  demo:\n    style: conventional\n"))
         self.assertEqual(plan_repo(snapshot, forced).style_source, "override")
 
     def test_onboarded_repo_keeps_baseline_and_is_compliant(self) -> None:
@@ -336,7 +346,7 @@ class DecisionTest(unittest.TestCase):
         plan = plan_repo(make_snapshot(files=files, modes=modes), CONFIG)
         self.assertEqual(plan.ruleset, "pushes")
         self.assertIn("badges.yml", plan.ruleset_reason)
-        forced = parse_config((ROOT / "config.yml").read_text(encoding="utf-8").replace("overrides: {}", "overrides:\n  demo:\n    ruleset: true\n"))
+        forced = parse_config(_with_overrides("overrides:\n  demo:\n    ruleset: true\n"))
         self.assertEqual(plan_repo(make_snapshot(files=files, modes=modes), forced).ruleset, "create")
 
     def test_custom_templates_are_not_overwritten(self) -> None:
@@ -398,7 +408,7 @@ class ConfigTest(unittest.TestCase):
     def test_rejects_bad_values(self) -> None:
         text = (ROOT / "config.yml").read_text(encoding="utf-8")
         for old, new in (
-            ("overrides: {}", "overrides:\n  x:\n    style: angular\n"),
+            (_OVERRIDES_BLOCK, "overrides:\n  x:\n    style: angular\n"),
             ('color: "1d76db"', 'color: "blue"'),
             ("squash_merge_commit_title: PR_TITLE", "squash_merge_commit_title: TITLE"),
             ("pr_commits: warn", "pr_commits: maybe"),

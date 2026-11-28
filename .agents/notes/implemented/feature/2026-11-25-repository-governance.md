@@ -31,4 +31,4 @@ Decision-ID: repository-governance
 
 ## Consequences
 
-审阅单会列出私有仓库名字, 但不含其代码. 公开仓库需要先合并治理 PR 再执行一次才有规则集; 有推送类工作流的仓库要在配置里显式允许. `HYGIENE_TOKEN` 需要额外的 `workflow` 权限才能写入 commit-lint 工作流. 目标仓库里的 `commit_lint.py` 是本目录同名文件的副本, 修改后需要再执行一次治理同步
+审阅单会列出私有仓库名字, 但不含其代码. 公开仓库需要先合并治理 PR 再执行一次才有规则集; 有推送类工作流的仓库要在配置里显式允许. `HYGIENE_TOKEN` 需要额外的 `workflow` 权限才能写入 commit-lint 工作流. 目标仓库里的 `commit_lint.py` 是本目录同名文件的副本, 修改后需要再执行一次治理同步. 测试读取真实 `config.yml` 时只替换末尾的 overrides 块, 不依赖其具体内容, 因此在配置里加仓库覆盖不会让测试失败
