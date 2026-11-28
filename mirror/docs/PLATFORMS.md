@@ -123,7 +123,7 @@
 | 步骤 | 链接 |
 | --- | --- |
 | 注册入口 (微信扫码即注册) | <https://cnb.cool/> |
-| 注册完先建组织 (必需) | <https://cnb.cool/new/group> |
+| 注册完先建组织 (必需) | <https://cnb.cool/new/groups> |
 | 然后立即打开 | <https://cnb.cool/profile/token/create> |
 
 1. 打开 cnb.cool 点右上角登录, 用微信扫码, 第一次登录就是注册, 按提示设置用户名.

@@ -43,7 +43,7 @@ targets:
 
   - name: cnb
     provider: cnb
-    owner: HengXin666            # CNB 组织 (根组织/子组织) 路径, CNB 仓库只能建在组织下
+    owner: HXLoLi                # CNB 组织路径 (https://cnb.cool/HXLoLi), CNB 仓库只能建在组织下
     token_env: CNB_TOKEN
 
   # 自建 Forgejo / Gitea 示例:
