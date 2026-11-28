@@ -3,6 +3,7 @@
   "guarded": [
     "bilibili-api",
     "governance",
+    "mirror",
     "scripts",
     "tg"
   ]

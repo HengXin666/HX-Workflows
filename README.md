@@ -7,6 +7,7 @@
 - [emall](./emall/)
 - [hygiene](./hygiene/)
 - [governance](./governance/)
+- [mirror](./mirror/)
 
 ## GitHub Actions
 
@@ -16,6 +17,7 @@
 - [仓库卫生修复](./.github/workflows/hygiene-apply.yml)
 - [仓库治理扫描](./.github/workflows/governance-scan.yml)
 - [仓库治理修复](./.github/workflows/governance-apply.yml)
+- [多平台镜像同步](./.github/workflows/mirror-sync.yml)
 
 ## 仓库卫生
 
@@ -46,6 +48,7 @@
 - [邮件发送组件](./emall/README.md)
 - [仓库卫生](./hygiene/README.md)
 - [仓库治理](./governance/README.md)
+- [多平台镜像同步](./mirror/README.md)
 
 ## 配置入口
 
@@ -54,6 +57,7 @@
 - [TG 签到配置](./tg/config/signins.yml)
 - [仓库卫生配置](./hygiene/config.yml)
 - [仓库治理配置](./governance/config.yml)
+- [镜像同步配置](./mirror/config.yml)
 
 ## 许可证
 

@@ -1,0 +1,12 @@
+[project]
+name = "hx-mirror"
+version = "0.1.0"
+description = "Mirror personal GitHub repositories to GitLab, Gitee, Codeberg/Forgejo and CNB."
+requires-python = ">=3.12"
+dependencies = ["pyyaml>=6.0"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.uv]
+package = false

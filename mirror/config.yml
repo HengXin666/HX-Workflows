@@ -1,0 +1,55 @@
+# 多平台镜像同步配置. 完整说明见 mirror/README.md
+# 令牌只写环境变量名 (token_env), 值放在 GitHub Actions secrets 里, 不要写进本文件.
+
+source:
+  provider: github
+  owner: HengXin666              # 要备份的 GitHub 用户名或组织名
+  token_env: MIRROR_GITHUB_TOKEN # 工作流里没配时自动用 HYGIENE_TOKEN
+  include_private: true          # 私有仓库也同步
+  include_forks: false           # fork 来的仓库不同步
+  include_archived: true         # 已归档仓库照样备份
+  include: []                    # 只同步匹配的仓库 (glob, 不分大小写), 留空表示全部
+  exclude: []                    # 例: ["*-playground", "tmp-*"]
+
+policy:
+  visibility: follow     # follow = 继承源仓库的公开/私有; private = 全部私有; public = 全部公开
+  sync_visibility: true  # 已存在的目标仓库可见性和源不一致时改成一致 (CNB 不支持, 只提示)
+  create_missing: true   # 目标平台没有这个仓库就新建
+  prune: false           # true = 源上删掉的分支/标签在目标上也删除
+  concurrency: 2         # 同时处理几个仓库
+  max_retries: 3         # 网络等临时失败的重试次数
+  git_timeout: 1800      # 单次 git 拉取/推送的超时秒数
+
+# 每个平台一段. 没配 token_env 对应 secret 的平台会自动跳过, 所以不用的平台可以留着.
+targets:
+  - name: gitlab
+    provider: gitlab
+    owner: HengXin666            # GitLab 用户名或群组路径 (可以是 group/subgroup)
+    token_env: GITLAB_TOKEN
+    base_url: https://gitlab.com # 自建 GitLab 改成你的域名, api_url 自动拼 /api/v4
+
+  - name: gitee
+    provider: gitee
+    owner: HengXin666            # Gitee 个人空间地址或组织 path
+    token_env: GITEE_TOKEN
+    # Gitee 不允许以 . 开头的仓库名, 按需排除或改名:
+    # exclude: [".github"]
+    # rename: { ".github": "dot-github" }
+
+  - name: codeberg
+    provider: codeberg
+    owner: HengXin666            # Codeberg 用户名或组织名
+    token_env: CODEBERG_TOKEN
+
+  - name: cnb
+    provider: cnb
+    owner: HengXin666            # CNB 组织 (根组织/子组织) 路径, CNB 仓库只能建在组织下
+    token_env: CNB_TOKEN
+
+  # 自建 Forgejo / Gitea 示例:
+  # - name: my-forgejo
+  #   provider: forgejo          # 或 gitea
+  #   owner: hx
+  #   token_env: FORGEJO_TOKEN
+  #   base_url: https://git.example.com
+  #   api_url: https://git.example.com/api/v1
