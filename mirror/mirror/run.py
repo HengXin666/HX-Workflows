@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import shutil
 import time
 from collections.abc import Callable, Mapping
 from concurrent.futures import ThreadPoolExecutor
@@ -175,7 +176,14 @@ def sync_repo(repo: SourceRepo, source: Source, targets: list[Target], config: C
                 for t in targets
             ]
         mirror_dir = directory if git.has_refs(directory) else None
-    return [sync_target(repo, mirror_dir, target, config, git, dry_run) for target in targets]
+    try:
+        # One local copy, pushed to every platform at the same time.
+        with ThreadPoolExecutor(max_workers=max(1, len(targets))) as pool:
+            return list(pool.map(lambda target: sync_target(repo, mirror_dir, target, config, git, dry_run), targets))
+    finally:
+        if not dry_run:
+            # Free the disk right away: a hosted runner cannot hold every large repository at once.
+            shutil.rmtree(cache / f"{repo.name}.git", ignore_errors=True)
 
 
 def run(

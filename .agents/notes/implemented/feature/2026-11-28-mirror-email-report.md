@@ -30,4 +30,4 @@ Decision-ID: mirror-email-report
 
 ## Consequences
 
-收件邮箱会收到私有仓库名; 改收件人只能改 secret. 每天都发会有一封邮件, 不想要可改 `notify.email: failure`. 邮件客户端不支持的 CSS (阴影、圆角) 会降级为直角无阴影, 不影响内容
+收件邮箱会收到私有仓库名; 改收件人只能改 secret. 每天都发会有一封邮件, 不想要可改 `notify.email: failure`. 邮件客户端不支持的 CSS (阴影、圆角) 会降级为直角无阴影, 不影响内容. 邮件在整次运行结束后才发, 大仓库并行推送 (见多平台镜像决策) 时若任务被超时终止则不会发信

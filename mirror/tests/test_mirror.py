@@ -236,6 +236,7 @@ class RunTest(unittest.TestCase):
         self.assertEqual(report.outcomes[0].updated_refs, 3)
         self.assertTrue(report.outcomes[0].changed)
         self.assertEqual([repo.name for repo in report.repos], ["repo"])
+        self.assertFalse((self.root / "cache" / "repo.git").exists())
         again = run(config(), source, targets=[target], cache=self.root / "cache")  # type: ignore[arg-type]
         self.assertEqual(again.outcomes[0].updated_refs, 0)
         self.assertFalse(again.outcomes[0].changed)

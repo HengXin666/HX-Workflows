@@ -79,7 +79,7 @@ targets:
 | | `sync_visibility` | `true` | 已存在的目标仓库也按上面的规则改可见性 |
 | | `create_missing` | `true` | 目标没有就新建; `false` 时只推已存在的仓库 |
 | | `prune` | `false` | `true` 时源上删除的分支 / 标签在目标上也删除 |
-| | `concurrency` | `2` | 同时处理的仓库数 |
+| | `concurrency` | `2` | 同时处理的仓库数 (本仓库配置为 4). 每个仓库只拉一次, 同时推往所有平台, 推完立即删除本地副本以节省磁盘 |
 | | `max_retries` | `3` | 临时失败重试次数 |
 | | `git_timeout` | `1800` | 单次拉取 / 推送超时秒数 |
 | `targets[]` | `name` | 同 `provider` | 报告里显示的名字, 不能重复. 同一平台推两个账号时用它区分 |
